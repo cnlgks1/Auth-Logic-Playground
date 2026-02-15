@@ -7,7 +7,8 @@ services:
     plan: free
     # Install dev dependencies to get Nest CLI, then build
     buildCommand: npm install --include=dev && npx prisma generate && npm run build
-    startCommand: npx prisma migrate deploy && npm run start:prod
+    # Use db push to sync schema without migrations (fixes SQLite vs Postgres conflict)
+    startCommand: npx prisma db push && npm run start:prod
     envVars:
       - key: DATABASE_URL
         fromDatabase:
