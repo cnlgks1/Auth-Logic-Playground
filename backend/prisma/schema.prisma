@@ -1,0 +1,26 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  username     String?
+  password     String?  // Nullable for OAuth users
+  refreshToken String?  // For verifying refresh token
+  provider     String   @default("local") // 'local' or 'google'
+  avatarUrl    String?
+  firstName    String?
+  lastName     String?
+  googleId     String?  @unique // For Google OAuth
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}

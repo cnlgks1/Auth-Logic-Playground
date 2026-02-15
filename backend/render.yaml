@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: oauth-backend
+    env: docker
+    plan: free
+    dockerContext: .
+    buildCommand: docker build -t oauth-backend .
+    startCommand: docker run -p 3001:3001 oauth-backend
+    envVars:
+      - key: DATABASE_URL
+        value: file:./dev.db
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        value: https://your-frontend.vercel.app
+      - key: NODE_ENV
+        value: production
+    disk:
+      name: sqlite-data
+      mountPath: /usr/src/app
+      sizeGB: 1
