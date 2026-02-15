@@ -1,5 +1,5 @@
 {
-  "name": "OAuth-backend",
+  "name": "Auth-Logic-Playground-backend",
   "version": "0.0.1",
   "description": "Enterprise-grade OAuth Backend with NestJS",
   "author": "KSC",

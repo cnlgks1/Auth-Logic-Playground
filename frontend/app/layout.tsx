@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Nexus Auth System",
-  description: "Advanced OAuth 2.0 Demonstration",
+  title: "Auth Logic Playground",
+  description: "Auth Logic Playground",
 };
 
 export default function RootLayout({

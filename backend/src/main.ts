@@ -10,7 +10,8 @@ async function bootstrap() {
     origin: process.env.FRONTEND_URL || 'http://localhost:3000', // Frontend URL
     credentials: true,
   });
-  await app.listen(3001); // Backend runs on 3001
+  const port = process.env.PORT || 3001;
+  await app.listen(port); 
   console.log(`Application is running on: ${await app.getUrl()}`);
 }
 bootstrap();

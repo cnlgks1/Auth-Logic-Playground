@@ -108,27 +108,21 @@ export class AuthService {
 
       const googleUser = await profileResponse.json();
 
-      // 3. Generate Backend JWT
-      // Map Google profile to our user structure
-      const user = {
-        email: googleUser.email,
-        userId: googleUser.id,
-        username: googleUser.email.split('@')[0], // Add username for payload compatibility
-        picture: googleUser.picture,
-        firstName: googleUser.given_name,
-        lastName: googleUser.family_name,
-      };
+      // 3. Upsert User in DB to get internal ID (Fixes the "String vs Int" error)
+      const dbUser = await this.usersService.upsertGoogleUser(googleUser);
 
-      // 3. Generate Backend JWTs (Access + Refresh)
-      const backendTokens = await this.generateTokens(user, expiresInSeconds);
+      // 4. Generate Backend JWTs (Access + Refresh)
+      // generateTokens will now use dbUser.id (Int) for the refresh token update
+      const backendTokens = await this.generateTokens(dbUser, expiresInSeconds);
 
-      // 4. Return everything
+      // 5. Return everything
       return {
         google: googleTokens,
-        user: googleUser,
-        backend: backendTokens, // Contains access_token AND refresh_token
+        user: dbUser, // Return DB user structure
+        backend: backendTokens, 
       };
     } catch (error) {
+      console.error('Token exchange failed:', error);
       throw new Error(`Token exchange failed: ${error.message}`);
     }
   }

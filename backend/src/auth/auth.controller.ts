@@ -13,10 +13,11 @@ export class AuthController {
     const { access_token, refresh_token, user, expiresIn } = await this.authService.login(req.user, expiresInSeconds);
 
     // Set Refresh Token as HTTP-Only Cookie
+    const isProduction = process.env.NODE_ENV === 'production';
     res.cookie('refresh_token', refresh_token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: isProduction, // HTTPS required in prod
+      sameSite: isProduction ? 'none' : 'lax', // 'none' needed for cross-site (Vercel -> Render)
       maxAge: 7 * 24 * 60 * 60 * 1000, 
     });
 
@@ -73,10 +74,11 @@ export class AuthController {
     
     // Set Refresh Token Cookie for Google Login too!
     if (result.backend?.refresh_token) {
+       const isProduction = process.env.NODE_ENV === 'production';
        res.cookie('refresh_token', result.backend.refresh_token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
     }
