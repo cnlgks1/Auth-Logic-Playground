@@ -1,46 +1,26 @@
 services:
-  # Backend Service (NestJS)
+  # Backend Service (NestJS via Docker + SQLite)
   - type: web
     name: oauth-backend
-    env: node
-    root: backend
+    env: docker
+    rootDir: backend
     plan: free
-    buildCommand: npm install && npx prisma generate && npm run build
-    startCommand: npm run start:prod
+    # Run migrations on the persistent DB before starting
+    startCommand: npx prisma migrate deploy && pnpm start:prod
     envVars:
-      - key: PORT
-        sync: false
       - key: DATABASE_URL
-        fromDatabase:
-          name: oauth-db
-          property: connectionString
+        value: file:/data/dev.db
       - key: JWT_SECRET
         generateValue: true
+      - key: FRONTEND_URL
+        value: https://auth-logic-playground.vercel.app
       - key: NODE_ENV
         value: production
-      - key: FRONTEND_URL
-        fromService:
-          type: web
-          name: oauth-frontend
-          property: url
-
-  # Frontend Service (Next.js)
-  - type: web
-    name: oauth-frontend
-    env: node
-    root: frontend
-    plan: free
-    buildCommand: npm install && npm run build
-    startCommand: npm start
-    envVars:
-      - key: NEXT_PUBLIC_API_URL
-        fromService:
-          type: web
-          name: oauth-backend
-          property: url
-
-databases:
-  - name: oauth-db
-    plan: free
-    databaseName: oauth
-    user: oauth_user
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+    disk:
+      name: sqlite-data
+      mountPath: /data
+      sizeGB: 1
