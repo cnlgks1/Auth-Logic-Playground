@@ -64,7 +64,7 @@ export class AuthController {
     const { code, redirectUri, expiresInSeconds } = body;
     // Use Environment variables for sensitive data (Secret)
     const clientId = body.clientId || process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const clientSecret = body.clientSecret || process.env.GOOGLE_CLIENT_SECRET;
 
     if (!clientSecret) {
       throw new Error('GOOGLE_CLIENT_SECRET is not configured in backend .env');

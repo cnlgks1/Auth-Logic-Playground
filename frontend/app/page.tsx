@@ -16,6 +16,10 @@ export default function LoginPage() {
   const [expiresIn, setExpiresIn] = useState(10); // Default 10s
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
+  // Custom OAuth Credentials
+  const [customClientId, setCustomClientId] = useState('');
+  const [customClientSecret, setCustomClientSecret] = useState('');
+
   // Scroll logs to bottom
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -87,27 +91,34 @@ export default function LoginPage() {
 
   // 2. OAuth Handlers
   const handleGoogleLogin = () => {
-    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    // 1. Use Custom ID if provided, otherwise Env
+    const clientId = customClientId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    
     if (!clientId) {
-      addLog('🔴 [Error] Google Client ID가 없습니다. .env.local을 확인하세요.');
+      addLog('🔴 [Error] Google Client ID가 없습니다. .env.local을 확인하거나 직접 입력하세요.');
       return;
     }
     
     addLog('🔵 [Client] Google OAuth 인증 시작...');
+    addLog(`🔵 [Client] Client ID: ${clientId.substring(0, 10)}... 사용`);
     addLog('🔵 [Client] 구글 로그인 페이지로 이동합니다.');
     
     const params = new URLSearchParams({
       client_id: clientId,
-      redirect_uri: 'http://localhost:3000',
+      redirect_uri: window.location.origin, // Dynamic origin for deployment
       response_type: 'code',
       scope: 'email profile',
       access_type: 'offline',
       prompt: 'consent',
     });
     
-    // Save state including expiresIn
+    // Save state including custom credentials
     localStorage.setItem('demo_logs', JSON.stringify([...logs, '🔵 [Client] 구글 로그인 페이지로 이동합니다.']));
-    localStorage.setItem('demo_expires_in', String(expiresIn)); // Persist Expiry setting
+    localStorage.setItem('demo_expires_in', String(expiresIn));
+    
+    // Save custom credentials if they exist
+    if (customClientId) localStorage.setItem('demo_custom_client_id', customClientId);
+    if (customClientSecret) localStorage.setItem('demo_custom_client_secret', customClientSecret);
     
     window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
   };
@@ -121,27 +132,44 @@ export default function LoginPage() {
       localStorage.removeItem('demo_logs');
     }
     
-    // Restore Expiry (because page reloaded)
+    // Restore Expiry
     const savedExpiresIn = localStorage.getItem('demo_expires_in');
     if (savedExpiresIn) {
         setExpiresIn(Number(savedExpiresIn));
         localStorage.removeItem('demo_expires_in');
     }
 
+    // Restore Custom Credentials
+    const savedClientId = localStorage.getItem('demo_custom_client_id');
+    const savedClientSecret = localStorage.getItem('demo_custom_client_secret');
+    
+    if (savedClientId) {
+        setCustomClientId(savedClientId);
+        localStorage.removeItem('demo_custom_client_id');
+    }
+    if (savedClientSecret) {
+        setCustomClientSecret(savedClientSecret);
+        localStorage.removeItem('demo_custom_client_secret');
+    }
+
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
 
     if (code) {
+      // Clear URL params
       window.history.replaceState({}, document.title, window.location.pathname);
-      handleOAuthExchange(code, savedExpiresIn ? Number(savedExpiresIn) : 10);
+      
+      // Pass restored credentials to exchange function
+      handleOAuthExchange(code, savedExpiresIn ? Number(savedExpiresIn) : 10, savedClientId, savedClientSecret);
     }
   }, []);
 
-  const handleOAuthExchange = async (code: string, exp: number) => {
+  const handleOAuthExchange = async (code: string, exp: number, cId?: string | null, cSecret?: string | null) => {
     setLoading(true);
     addLog('🟢 [Client] 구글에서 돌아왔습니다! 인증 코드(Code) 수신함.');
     
     addLog(`⚡️ [Client] 요청할 토큰 만료 시간: ${exp}초`);
+    if (cId) addLog(`🔑 [Client] Custom Client ID 사용됨`);
 
     addLog('🔵 [Client] 서버(/auth/exchange)로 코드 전송 및 교환 요청...');
 
@@ -151,14 +179,18 @@ export default function LoginPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code,
-          clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
-          clientSecret: '', // Public client
-          redirectUri: 'http://localhost:3000',
-          expiresInSeconds: exp // Send param to backend
+          clientId: cId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+          clientSecret: cSecret || '', // Send the secret we restored (or empty for public client)
+          redirectUri: window.location.origin, // Match the redirect_uri sent in step 1
+          expiresInSeconds: exp
         }),
       });
       
       const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.message || 'Token exchange failed');
+      }
       
       const token = data.backend?.access_token || data.access_token;
       
@@ -171,8 +203,8 @@ export default function LoginPage() {
       } else {
         addLog('🔴 [Error] 토큰을 받지 못했습니다. 응답을 확인하세요.');
       }
-    } catch (err) {
-      addLog('🔴 [Error] 교환 실패. 백엔드 로그를 확인하세요.');
+    } catch (err: any) {
+      addLog(`🔴 [Error] 교환 실패: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -291,10 +323,32 @@ export default function LoginPage() {
                 <h2 className="font-bold text-lg text-white">2. 구글 로그인</h2>
               </div>
                <div className="space-y-3">
-                 <div className="bg-slate-950 p-3 rounded text-sm font-mono text-slate-400 border border-slate-800">
-                  <span className="text-emerald-500 font-bold block mb-1">Zero-Config Mode</span>
-                  <div className="text-xs opacity-70">.env 설정값을 자동으로 로드합니다.</div>
+                 <div className="bg-slate-950 p-3 rounded text-sm font-mono text-slate-400 border border-slate-800 space-y-2">
+                  <span className="text-emerald-500 font-bold block mb-1">Custom Credentials Mode</span>
+                  <div className="text-xs opacity-70 mb-2">테스트할 구글 앱의 정보를 입력하세요. (비워두면 .env 사용)</div>
+                  
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">Client ID</label>
+                    <input 
+                      type="text" 
+                      value={customClientId} 
+                      onChange={(e) => setCustomClientId(e.target.value)}
+                      placeholder={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "Enter Client ID"}
+                      className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:border-emerald-500 outline-none placeholder:text-slate-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">Client Secret</label>
+                    <input 
+                      type="password" 
+                      value={customClientSecret} 
+                      onChange={(e) => setCustomClientSecret(e.target.value)}
+                      placeholder="Enter Client Secret"
+                      className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:border-emerald-500 outline-none"
+                    />
+                  </div>
                 </div>
+
                 <button 
                   onClick={handleGoogleLogin}
                   disabled={!!accessToken || loading}
