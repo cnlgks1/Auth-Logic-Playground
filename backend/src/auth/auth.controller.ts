@@ -4,29 +4,28 @@ import { AuthService } from './auth.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService) { }
 
   @UseGuards(AuthGuard('local'))
   @Post('login')
   async login(@Req() req, @Res({ passthrough: true }) res, @Body() body: { expiresInSeconds?: number; refreshTokenExpiresInSeconds?: number }) {
     const expiresInSeconds = body.expiresInSeconds;
     const refreshTokenExpiresInSeconds = body.refreshTokenExpiresInSeconds;
-    
+
     const { access_token, refresh_token, user, expiresIn } = await this.authService.login(req.user, expiresInSeconds, refreshTokenExpiresInSeconds);
 
-    // FORCE RELAXED SETTINGS FOR DEBUGGING
-    const isProduction = false; 
-    
-    // Calculate maxAge based on input or default (7d)
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    // 입력값 또는 기본값(7일)을 기반으로 maxAge 계산
     const maxAge = refreshTokenExpiresInSeconds ? refreshTokenExpiresInSeconds * 1000 : 7 * 24 * 60 * 60 * 1000;
 
-    console.log(`🍪 [Backend] Setting Cookie: secure=false, maxAge=${maxAge}, sameSite=lax`);
+    console.log(`🍪 [Backend] 쿠키 설정: secure=${isProduction}, maxAge=${maxAge}, sameSite=${isProduction ? 'none' : 'lax'}`);
 
     res.cookie('refresh_token', refresh_token, {
       httpOnly: true,
-      secure: false, // Force false for localhost
-      sameSite: 'lax', // Force lax for localhost
-      maxAge: maxAge, 
+      secure: isProduction,               // 배포 환경: true, 로컬: false
+      sameSite: isProduction ? 'none' : 'lax', // 배포 환경: 'none', 로컬: 'lax'
+      maxAge: maxAge,
     });
 
     return { access_token, user, expiresIn };
@@ -34,74 +33,73 @@ export class AuthController {
 
   @Post('refresh')
   async refresh(@Req() req, @Res({ passthrough: true }) res, @Body() body: { expiresInSeconds?: number }) {
-    console.log('🔄 [Backend] Refresh Request Received');
-    console.log('🍪 [Backend] Cookies:', req.cookies);
-    
+    console.log('🔄 [Backend] 리프레시 요청 수신됨');
+    console.log('🍪 [Backend] 쿠키:', req.cookies);
+
     const refreshToken = req.cookies['refresh_token'];
-    
+
     if (!refreshToken) {
-      console.error('❌ [Backend] No refresh_token cookie found!');
-      return res.status(401).json({ message: 'Refresh token not found' });
+      console.error('❌ [Backend] refresh_token 쿠키를 찾을 수 없습니다!');
+      return res.status(401).json({ message: '리프레시 토큰이 없습니다.' });
     }
 
     try {
       const result = await this.authService.refresh(refreshToken, body.expiresInSeconds);
-      console.log('✅ [Backend] Refresh Successful');
+      console.log('✅ [Backend] 리프레시 성공');
       return result;
     } catch (e) {
-      console.error('❌ [Backend] Refresh Token Verification Failed:', e.message);
-      // If refresh fails, clear the cookie
+      console.error('❌ [Backend] 리프레시 토큰 검증 실패:', e.message);
+      // 리프레시 실패 시 쿠키 삭제
       res.clearCookie('refresh_token');
-      return res.status(401).json({ message: 'Invalid refresh token' });
+      return res.status(401).json({ message: '유효하지 않은 리프레시 토큰입니다.' });
     }
   }
 
   @Get('google')
   @UseGuards(AuthGuard('google'))
   async googleAuth(@Req() req) {
-    // Redirects to Google automatically
+    // 구글로 자동 리다이렉트
   }
 
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   async googleAuthRedirect(@Req() req, @Res() res) {
-    // This is the traditional redirect flow. Harder to pass 'isTestMode' here without state param.
-    // For the demo, we use the manual /exchange endpoint, so this one can remain simple or use default.
-    // We'll leave it as is for now as the user uses the manual flow.
-    const { access_token } = await this.authService.login(req.user); // Default mode
+    // 전통적인 리다이렉트 방식. state 파라미터 없이는 'isTestMode'를 전달하기 어렵습니다.
+    // 플레이그라운드 데모에서는 수동 /exchange 엔드포인트를 사용하므로, 이 부분은 간단히 유지하거나 기본값을 사용합니다.
+    const { access_token } = await this.authService.login(req.user); // 기본 모드
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     res.redirect(`${frontendUrl}?token=${access_token}&login_success=true`);
   }
 
-  @Post('exchange') // Manual exchange for Playground
+  @Post('exchange') // 플레이그라운드용 수동 교환
   async exchangeToken(@Body() body: { code: string; clientId: string; clientSecret: string; redirectUri: string; expiresInSeconds?: number; refreshTokenExpiresInSeconds?: number }, @Res({ passthrough: true }) res) {
     const { code, redirectUri, expiresInSeconds, refreshTokenExpiresInSeconds } = body;
-    // Use Environment variables for sensitive data (Secret)
+    // 민감한 데이터(Secret)는 환경 변수 사용
     const clientId = body.clientId || process.env.GOOGLE_CLIENT_ID;
     const clientSecret = body.clientSecret || process.env.GOOGLE_CLIENT_SECRET;
 
     if (!clientSecret) {
-      throw new Error('GOOGLE_CLIENT_SECRET is not configured in backend .env');
+      throw new Error('백엔드 .env에 GOOGLE_CLIENT_SECRET이 설정되지 않았습니다');
     }
 
     const result = await this.authService.exchangeCodeForToken(code, clientId, clientSecret, redirectUri, expiresInSeconds, refreshTokenExpiresInSeconds);
-    
-    // Set Refresh Token Cookie for Google Login too!
-    if (result.backend?.refresh_token) {
-       const isProduction = process.env.NODE_ENV === 'production';
-       const maxAge = refreshTokenExpiresInSeconds ? refreshTokenExpiresInSeconds * 1000 : 7 * 24 * 60 * 60 * 1000;
 
-       res.cookie('refresh_token', result.backend.refresh_token, {
+    // 구글 로그인 시에도 리프레시 토큰 쿠키 설정!
+    if (result.backend?.refresh_token) {
+      const isProduction = process.env.NODE_ENV === 'production';
+      const maxAge = refreshTokenExpiresInSeconds ? refreshTokenExpiresInSeconds * 1000 : 7 * 24 * 60 * 60 * 1000;
+
+      res.cookie('refresh_token', result.backend.refresh_token, {
         httpOnly: true,
         secure: isProduction,
         sameSite: isProduction ? 'none' : 'lax',
         maxAge: maxAge,
       });
     }
-    
+
     return result;
   }
-  
+
   @UseGuards(AuthGuard('jwt'))
   @Get('me')
   getProfile(@Req() req) {

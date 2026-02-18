@@ -298,7 +298,7 @@ export default function LoginPage() {
                 <div className={`p-6 rounded-2xl border transition-all ${accessToken ? 'bg-purple-900/10 border-purple-500/30' : 'bg-[#15161a] border-white/10'}`}>
                     <div className="flex justify-between items-start mb-6">
                         <div>
-                            <p className="text-xs uppercase font-bold text-slate-500 mb-1">Current Status</p>
+                            <p className="text-xs uppercase font-bold text-slate-500 mb-1">현재 상태</p>
                             <div className="text-2xl font-bold text-white flex items-center gap-2">
                                 {accessToken ? (
                                     <>
