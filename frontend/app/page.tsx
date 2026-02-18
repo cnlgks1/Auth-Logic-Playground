@@ -253,7 +253,59 @@ export default function LoginPage() {
     setRedirectUri(window.location.origin);
   }, []);
 
-  // 🔗 URL에서 인증 코드(Code) 감지
+  // 🚀 [Step B] 인증 코드를 백엔드로 보내서 토큰 교환 (위치 이동 및 자동화 대응)
+  const handleGoogleExchange = async (codeOverride?: string, expiresInOverride?: number, rtExpiresInOverride?: number) => {
+      const codeToUse = codeOverride || googleCode;
+      if (!codeToUse) return;
+
+      setOauthLoading(true);
+      addLog(`🔵 [OAuth] 인증 코드를 백엔드로 전송하여 토큰 교환 요청...`);
+
+      // 1. 설정값 결정 (인자값 -> State -> 기본값)
+      const finalExpiresIn = expiresInOverride || expiresIn;
+      const finalRtExpiresIn = rtExpiresInOverride || refreshTokenLife;
+
+      try {
+          const res = await fetch(`/auth/exchange`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                  code: codeToUse,
+                  // 하이브리드: 입력값 우선, 없으면 .env 값 전송
+                  clientId: customClientId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,         
+                  clientSecret: customClientSecret || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET, 
+                  redirectUri: window.location.origin, // ⚡️ State 대신 직접 위도우 객체 사용 (확실함)
+                  expiresInSeconds: finalExpiresIn,
+                  refreshTokenExpiresInSeconds: finalRtExpiresIn
+              })
+          });
+
+          if (!res.ok) {
+              const errText = await res.text();
+              throw new Error(errText);
+          }
+
+          const data = await res.json();
+          
+          setAccessToken(data.backend.access_token);
+          setUser(data.user);
+          setRtTimeLeft(finalRtExpiresIn); // 설정된 값으로 타이머 시작
+          
+          addLog(`🟢 [OAuth 성공] 구글 인증 완료! (AT: ${finalExpiresIn}s, RT: ${finalRtExpiresIn}s)`);
+          addLog(`   - Access Token: ${data.backend.access_token.substring(0, 15)}...`);
+          addLog(`   - User: ${data.user.email} (${data.user.username})`);
+
+          // 성공했으니 코드는 더 이상 필요 없음 (UI 초기화)
+          setGoogleCode(null);
+
+      } catch (err: any) {
+          addLog(`🔴 [OAuth 실패] 토큰 교환 중 오류 발생: ${err.message}`);
+      } finally {
+          setOauthLoading(false);
+      }
+  };
+
+  // 🔗 URL에서 인증 코드(Code) 감지 및 로컬 스토리지에 저장된 설정 복구
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
@@ -262,8 +314,36 @@ export default function LoginPage() {
         addLog(`✨ [OAuth] 구글에서 인증 코드(Code)를 받아왔습니다!`);
         addLog(`   - Code: ${code.substring(0, 15)}...`);
         
+        // 이전에 입력했던 커스텀 설정 & 토큰 수명 설정 복구
+        const savedClientId = localStorage.getItem('custom_office_client_id');
+        const savedClientSecret = localStorage.getItem('custom_office_client_secret');
+        const savedExpiresIn = localStorage.getItem('custom_expires_in');
+        const savedRtExpiresIn = localStorage.getItem('custom_rt_expires_in');
+        
+        if (savedClientId) setCustomClientId(savedClientId);
+        if (savedClientSecret) setCustomClientSecret(savedClientSecret);
+        
+        let restoredExpiresIn = undefined;
+        let restoredRtExpiresIn = undefined;
+
+        if (savedExpiresIn) {
+            restoredExpiresIn = parseInt(savedExpiresIn);
+            setExpiresIn(restoredExpiresIn);
+            addLog(`⚙️ [설정 복구] Access Token 수명: ${restoredExpiresIn}초`);
+        }
+        if (savedRtExpiresIn) {
+            restoredRtExpiresIn = parseInt(savedRtExpiresIn);
+            setRefreshTokenLife(restoredRtExpiresIn);
+            addLog(`⚙️ [설정 복구] Refresh Token 수명: ${restoredRtExpiresIn}초`);
+        }
+
+        // [자동 실행] 실제 서비스처럼 바로 토큰 교환 요청!
+        // (복구된 설정값을 인자로 전달하여 즉시 반영)
+        addLog(`🚀 [자동] 사용자 클릭 없이 바로 토큰 교환을 시작합니다.`);
+        handleGoogleExchange(code, restoredExpiresIn, restoredRtExpiresIn);
+
         // 코드를 URL에서 지워주는 센스 (선택)
-        window.history.replaceState({}, document.title, "/");
+        window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
 
@@ -289,57 +369,23 @@ export default function LoginPage() {
 
       const targetUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=email%20profile`;
       
-      // 사용자 설정을 썼다면 로컬 스토리지 등에 저장해두면 좋겠지만, 일단 상태 유지 차원에서 로그만 남김
+      // 사용자 설정 & 토큰 수명 설정을 로컬 스토리지에 저장 (갔다 와서 복구용)
+      localStorage.setItem('custom_expires_in', expiresIn.toString());
+      localStorage.setItem('custom_rt_expires_in', refreshTokenLife.toString());
+
       if (customClientId) {
           addLog(`🔧 [Custom] 사용자 지정 Client ID로 로그인합니다.`);
+          localStorage.setItem('custom_office_client_id', customClientId);
+          if (customClientSecret) {
+              localStorage.setItem('custom_office_client_secret', customClientSecret);
+          }
       }
 
       addLog(`👉 [OAuth] 구글 로그인 페이지로 이동합니다...`);
       window.location.href = targetUrl;
   };
 
-  // 🚀 [Step B] 인증 코드를 백엔드로 보내서 토큰 교환
-  const handleGoogleExchange = async () => {
-      if (!googleCode) return;
-      setOauthLoading(true);
-      addLog(`🔵 [OAuth] 인증 코드를 백엔드로 전송하여 토큰 교환 요청...`);
 
-      try {
-          const res = await fetch(`/auth/exchange`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                  code: googleCode,
-                  // 하이브리드: 입력값 우선, 없으면 .env 값 전송
-                  clientId: customClientId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,         
-                  clientSecret: customClientSecret || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET, 
-                  redirectUri: redirectUri,
-                  expiresInSeconds: expiresIn,
-                  refreshTokenExpiresInSeconds: refreshTokenLife
-              })
-          });
-
-          if (!res.ok) {
-              const errText = await res.text();
-              throw new Error(errText);
-          }
-
-          const data = await res.json();
-          
-          setAccessToken(data.backend.access_token);
-          setUser(data.user);
-          setRtTimeLeft(refreshTokenLife); // 가상 타이머
-          
-          addLog(`🟢 [OAuth 성공] 구글 인증 완료! JWT 토큰이 발급되었습니다.`);
-          addLog(`   - Access Token: ${data.backend.access_token.substring(0, 15)}...`);
-          addLog(`   - User: ${data.user.email} (${data.user.username})`);
-
-      } catch (err: any) {
-          addLog(`🔴 [OAuth 실패] 토큰 교환 중 오류 발생: ${err.message}`);
-      } finally {
-          setOauthLoading(false);
-      }
-  };
 
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-slate-300 font-sans selection:bg-purple-500/30">
@@ -482,11 +528,11 @@ export default function LoginPage() {
                                         Code: {googleCode}
                                     </div>
                                     <button 
-                                        onClick={handleGoogleExchange}
-                                        disabled={oauthLoading}
-                                        className="h-9 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold rounded-lg flex items-center justify-center gap-2 animate-pulse"
+                                        disabled
+                                        className="h-12 bg-emerald-600/50 text-white font-bold rounded-lg flex items-center justify-center gap-2 animate-pulse cursor-wait"
                                     >
-                                        {oauthLoading ? '토큰 교환 (로그인 완료)' : '코드로 입장권(Token) 받기'}
+                                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"/>
+                                        구글 로그인 완료 중...
                                     </button>
                                 </div>
                             )}
