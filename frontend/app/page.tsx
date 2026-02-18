@@ -364,7 +364,18 @@ export default function LoginPage() {
     setRtTimeLeft(null);
     setUser(null);
     setGoogleCode(null);
-    addLog('👋 로그아웃 되었습니다.');
+    
+    // 로컬 스토리지에 저장된 설정값도 모두 삭제
+    localStorage.removeItem('custom_office_client_id');
+    localStorage.removeItem('custom_office_client_secret');
+    localStorage.removeItem('custom_expires_in');
+    localStorage.removeItem('custom_rt_expires_in');
+
+    // 입력 필드 상태도 초기화 (시각적 피드백)
+    setCustomClientId('');
+    setCustomClientSecret('');
+    
+    addLog('👋 로그아웃 되었습니다. (설정값 초기화 완료)');
   };
 
   // 🚀 [Step A] 구글 로그인 페이지로 이동
