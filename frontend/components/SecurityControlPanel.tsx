@@ -129,8 +129,8 @@ export default function SecurityControlPanel({
         {/* Warning */}
         {accessTokenLife < 15 && (
             <div className="flex gap-2 items-start bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-lg text-xs text-yellow-200/80">
-                <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0"/>
-                <p>Short Access Token lifespan (Less than 15s) allows you to test <strong>Silent Refresh</strong> quickly. Watch the logs!</p>
+                <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0" aria-hidden="true"/>
+                <p>⚠️ <strong>팁:</strong> 액세스 토큰 수명을 짧게(15초 미만) 설정하면 <strong>자동 갱신</strong> 로직을 빠르게 테스트할 수 있습니다. 로그를 확인해보세요!</p>
             </div>
         )}
       </div>
