@@ -1,4 +1,4 @@
-export const API_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+export const API_URL = ''; // Relative path for proxy
 
 interface RequestOptions extends RequestInit {
   headers?: Record<string, string>;
@@ -6,7 +6,7 @@ interface RequestOptions extends RequestInit {
 
 export const api = {
   // Generic fetch wrapper
-  request: async (endpoint: string, options: RequestOptions = {}, token?: string | null) => {
+    request: async (endpoint: string, options: RequestOptions = {}, token?: string | null, expiresInSeconds?: number) => {
     let headers = options.headers || {};
     
     // 1. Attach Access Token if available
@@ -16,17 +16,23 @@ export const api = {
     headers['Content-Type'] = 'application/json';
 
     let response = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
+    
+    console.log(`📡 [API] Initial Response: ${response.status} ${response.statusText}`);
 
     // 2. Intercept 401 (Unauthorized) -> Try Refresh
     if (response.status === 401 && token) {
-      console.log('🔄 [API] Access Token expired. Attempting refresh...');
+      console.log('🔄 [API] Access Token expired (401). Attempting refresh...');
       
       try {
         // Call Refresh Endpoint (Cookie is sent automatically)
         const refreshRes = await fetch(`${API_URL}/auth/refresh`, { 
             method: 'POST',
-            credentials: 'include' // Important: Send Cookies
+            credentials: 'include', // Important: Send Cookies
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ expiresInSeconds })
         });
+
+        console.log(`🔄 [API] Refresh Response: ${refreshRes.status}`);
 
         if (refreshRes.ok) {
           const data = await refreshRes.json();
@@ -42,13 +48,21 @@ export const api = {
           // Return new token along with response so calling component can update state
           return { response, newAccessToken };
         } else {
-            console.error('❌ [API] Refresh failed. User needs to login again.');
-            throw new Error('Session expired');
+            let errorMsg = refreshRes.statusText;
+            try {
+                const errData = await refreshRes.json();
+                errorMsg = errData.message || errorMsg;
+            } catch (e) {}
+            
+            console.error(`❌ [API] Refresh failed: ${refreshRes.status} ${errorMsg}`);
+            throw new Error(`Refresh Failed: ${errorMsg}`);
         }
       } catch (err) {
         console.error('❌ [API] Refresh Error:', err);
         throw err;
       }
+    } else if (response.status === 401) {
+        console.warn('⚠️ [API] 401 received but no token provided (or null). Cannot refresh.');
     }
 
     return { response, newAccessToken: null };

@@ -25,23 +25,21 @@ export class AuthService {
 
 
   // Unified Token Generation Logic
-  private async generateTokens(user: any, expiresInSeconds?: number) {
+  private async generateTokens(user: any, expiresInSeconds?: number, refreshTokenExpiresInSeconds?: number) {
     const payload = { 
         username: user.username, 
         sub: user.id || user.userId || user.sub, // Consistently use ID
         email: user.email 
     };
     
-    // Default to 15m (900s) if no custom expiry provided
-    const atExpires = expiresInSeconds ? `${expiresInSeconds}s` : '15m';
-    const rtExpires = '7d';
+    // Default: AT=15m (900s), RT=7d (604800s)
+    const atExpires = expiresInSeconds ? `${expiresInSeconds}s` : '10s';
+    const rtExpires = refreshTokenExpiresInSeconds ? `${refreshTokenExpiresInSeconds}s` : '7d';
 
     const accessToken = this.jwtService.sign(payload, { expiresIn: atExpires });
     const refreshToken = this.jwtService.sign(payload, { expiresIn: rtExpires });
 
     // Save Refresh Token to DB (Important for explicit refresh logic)
-    // We should probably hash it, but for explicit demo flow, storing plain might be clearer logs?
-    // Let's store it as is for the demo to match EXACTLY what the client sends back.
     if (user.id || user.userId) {
         await this.usersService.updateRefreshToken(user.id || user.userId, refreshToken);
     }
@@ -50,29 +48,36 @@ export class AuthService {
       access_token: accessToken,
       refresh_token: refreshToken,
       user,
-      expiresIn: atExpires
+      expiresIn: atExpires,
+      refreshExpiresIn: rtExpires 
     };
   }
 
-  async login(user: any, expiresInSeconds?: number) {
-    return this.generateTokens(user, expiresInSeconds);
+  async login(user: any, expiresInSeconds?: number, refreshTokenExpiresInSeconds?: number) {
+    return this.generateTokens(user, expiresInSeconds, refreshTokenExpiresInSeconds);
   }
 
-  async refresh(refreshToken: string) {
+  async refresh(refreshToken: string, expiresInSeconds?: number) {
     try {
       const payload = this.jwtService.verify(refreshToken);
       // In a real app, check if user still exists or if token is revoked in DB
       const newPayload = { username: payload.username, sub: payload.sub, email: payload.email };
       
+      const atExpires = expiresInSeconds ? `${expiresInSeconds}s` : '15m'; // Default to 15m if not provided
+      
       return {
-        access_token: this.jwtService.sign(newPayload, { expiresIn: '15m' }), // Refresh always gives 15m for now (or could inherit mode)
+        access_token: this.jwtService.sign(newPayload, { expiresIn: atExpires }), 
       };
     } catch (e) {
+      console.error('❌ [Backend] JWT Verify Error:', e.name, e.message);
+      if (e.name === 'TokenExpiredError') {
+         console.error('   -> The Refresh Token has EXPIRED.');
+      }
       throw new Error('Invalid refresh token');
     }
   }
 
-  async exchangeCodeForToken(code: string, clientId: string, clientSecret: string, redirectUri: string, expiresInSeconds?: number) {
+  async exchangeCodeForToken(code: string, clientId: string, clientSecret: string, redirectUri: string, expiresInSeconds?: number, refreshTokenExpiresInSeconds?: number) {
     try {
       // 1. Exchange code for Google Token
       const response = await fetch('https://oauth2.googleapis.com/token', {
@@ -113,7 +118,7 @@ export class AuthService {
 
       // 4. Generate Backend JWTs (Access + Refresh)
       // generateTokens will now use dbUser.id (Int) for the refresh token update
-      const backendTokens = await this.generateTokens(dbUser, expiresInSeconds);
+      const backendTokens = await this.generateTokens(dbUser, expiresInSeconds, refreshTokenExpiresInSeconds);
 
       // 5. Return everything
       return {

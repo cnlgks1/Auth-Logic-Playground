@@ -22,15 +22,33 @@
 
 ---
 
-## ✨ 주요 기능 (Features)
+## 🔑 JWT 인증 원리 및 기능 (Core Concept)
 
-### 1. 🔍 인증 흐름 비교 (Auth Flow Comparison)
-- **Local Login (일반 로그인)**:
-  - `admin` / `1234` 계정으로 로그인.
-  - 서버에서 검증 후 Access Token(반환) + Refresh Token(쿠키) 발급.
-- **Google OAuth (소셜 로그인)**:
-  - 구글 로그인 창으로 리디렉션 -> 코드 수신 -> 백엔드 교환 -> 자체 JWT 발급.
-  - **Custom Credentials Mode**: 사용자가 자신의 Google Client ID/Secret을 직접 입력하여 테스트 가능.
+이 프로젝트는 **Access Token**과 **Refresh Token**의 생명주기를 시각적으로 보여줍니다.
+
+### 1. 토큰 발급 및 저장 (Token Issuance & Storage)
+로그인 성공 시 서버는 두 가지 토큰을 발급합니다:
+
+| 토큰 종류 | 수명 (Default) | 저장 위치 | 용도 및 특징 |
+| --- | --- | --- | --- |
+| **Access Token (AT)** | 15분 (짧음) | **JS 변수 (Memory)** | API 요청 시 `Authorization` 헤더에 담아 사용. <br> XSS 공격에 상대적으로 안전하지만, 새로고침 시 사라짐. |
+| **Refresh Token (RT)** | 7일 (김) | **HttpOnly Cookie** | AT가 만료되었을 때 재발급 용도. <br> 자바스크립트로 접근 불가능하여 XSS로부터 안전. |
+
+### 2. Silent Refresh (조용한 갱신)
+사용자가 서비스를 이용하는 도중 Access Token이 만료되면 어떻게 될까요?
+1. 클라이언트가 API를 요청합니다.
+2. 서버는 **401 Unauthorized** (토큰 만료) 에러를 보냅니다.
+3. 클라이언트(API Interceptor)는 이를 감지하고, **자동으로 `/auth/refresh` 요청**을 보냅니다. (이때 쿠키에 있는 RT가 전송됨)
+4. 서버 검증 후 **새로운 AT**를 발급해줍니다.
+5. 클라이언트는 새 토큰으로 **원래 하려던 요청을 재시도**합니다.
+*👉 사용자는 로그아웃되지 않고 끊김 없이 서비스를 이용할 수 있습니다.*
+
+### 3. Auto Refresh (자동 갱신)
+이 플레이그라운드만의 기능으로, 토큰이 만료되기 2초 전에 **미리 갱신**하는 옵션입니다.
+* **On**: 만료 직전 백그라운드에서 새 토큰을 받아와 로그인 상태를 무한히 연장합니다.
+* **Off**: 토큰이 만료되도록 내버려 둡니다. 이후 데이터 조회 시 **Silent Refresh**가 발생하는 것을 테스트할 수 있습니다.
+
+---
 
 ### 2. ⚡️ 실시간 로그 & 시각화 (Real-time Visualization)
 - 모든 인증 단계(요청, 응답, 에러, 헤더 포함)를 **터미널 스타일의 로그**로 실시간 출력.

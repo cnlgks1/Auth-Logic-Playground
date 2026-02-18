@@ -2,458 +2,430 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { 
-  Shield, Key, Terminal, User, Lock, LogOut, CheckCircle, 
-  Smartphone, Settings, Code, Activity, Server, Globe 
+  Shield, Key, Terminal, Code, Activity, Server, Clock, RefreshCw, LogOut, CheckCircle, AlertTriangle 
 } from 'lucide-react';
 import { api } from '../lib/api';
+import SecurityControlPanel from '../components/SecurityControlPanel';
 
+/**
+ * ----------------------------------------------------------------------------------
+ * [JWT 인증 로직 플레이그라운드]
+ * 
+ * 목적: 
+ * Access Token(AT)과 Refresh Token(RT)의 수명을 직접 조절하며,
+ * 토큰 만료 시 클라이언트와 서버가 어떻게 상호작용하는지 눈으로 확인하는 학습용 페이지입니다.
+ * 
+ * 핵심 개념:
+ * 1. Access Token (AT): 수명이 짧음. API 요청 시 헤더(Authorization)에 담아 보냄. (메모리에 저장)
+ * 2. Refresh Token (RT): 수명이 김. AT 재발급 용도. (브라우저 쿠키에 HttpOnly로 안전하게 저장)
+ * 3. Silent Refresh: 사용자가 모르게 백그라운드에서 AT를 새로 받아오는 기술.
+ * ----------------------------------------------------------------------------------
+ */
 export default function LoginPage() {
-  // Activity Log State
+  
+  // ==================================================================================
+  // 1. 상태 관리 (State Management)
+  // ==================================================================================
+
+  // 📝 로그 출력을 위한 상태
   const [logs, setLogs] = useState<string[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // Auth State
+  // 🔐 인증 관련 상태
+  // accessToken: 실제 API 요청에 사용할 인증권 (이게 없으면 로그인 안 된 거임)
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [user, setUser] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [expiresIn, setExpiresIn] = useState(10); // Default 10s
-  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [user, setUser] = useState<any>(null); // 로그인한 사용자 정보
+  const [loading, setLoading] = useState(false); // 로딩 중 표시
+  
+  // ⚙️ 설정값 (사용자가 UI에서 조절 가능)
+  const [expiresIn, setExpiresIn] = useState(10); // Access Token 수명 (초 단위)
+  const [refreshTokenLife, setRefreshTokenLife] = useState(604800); // Refresh Token 수명 (기본 7일)
+  const [autoRefresh, setAutoRefresh] = useState(true); // 자동 갱신 기능을 켤지 말지
+  
+  // ⏱️ 시각적 타이머 상태
+  const [atTimeLeft, setAtTimeLeft] = useState<number | null>(null); // AT 남은 시간
+  const [rtTimeLeft, setRtTimeLeft] = useState<number | null>(null); // RT 남은 시간 (가상)
 
-  // Custom OAuth Credentials
-  const [customClientId, setCustomClientId] = useState('');
-  const [customClientSecret, setCustomClientSecret] = useState('');
-  const [showCustomCreds, setShowCustomCreds] = useState(false);
 
-  // Scroll logs to bottom
+  // ==================================================================================
+  // 2. 부수 효과 (Effects & Timers)
+  // ==================================================================================
+
+  // 📜 로그가 추가될 때마다 스크롤을 맨 아래로 내림
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (logsEndRef.current && logsEndRef.current.parentElement) {
+        logsEndRef.current.parentElement.scrollTop = logsEndRef.current.parentElement.scrollHeight;
+    }
   }, [logs]);
 
-  // Timer Countdown Logic
+  /**
+   * ⏰ 토큰 만료 카운트다운 로직
+   * - Access Token이 발급되면 그 안에 담긴 만료 시간(exp)을 읽어서 남은 시간을 계산함.
+   * - 매 1초마다 남은 시간을 갱신하여 화면에 보여줌.
+   * - [중요] '자동 갱신'이 켜져 있으면, 만료 2초 전에(미리) 새 토큰을 요청함!
+   */
   useEffect(() => {
     if (!accessToken) {
-      setTimeLeft(null);
+      setAtTimeLeft(null);
+      // 참고: rtTimeLeft는 로그아웃 시에만 초기화함 (RT는 AT가 죽어도 살아있을 수 있으니까)
       return;
     }
 
     try {
-      const payloadBase64 = accessToken.split('.')[1];
-      const decodedJson = JSON.parse(atob(payloadBase64));
-      const exp = decodedJson.exp * 1000; // to ms
-
+      // JWT 디코딩: Base64로 인코딩된 토큰의 중간 부분(Payload)을 열어봅니다.
+      // 실제 서비스에선 'jwt-decode' 라이브러리를 쓰면 더 편해요.
+      const payload = JSON.parse(atob(accessToken.split('.')[1]));
+      const expMs = payload.exp * 1000; // 서버가 준 만료 시간 (밀리초 변환)
+      
       const interval = setInterval(() => {
         const now = Date.now();
-        const diff = Math.max(0, Math.ceil((exp - now) / 1000));
-        setTimeLeft(diff);
+        // 0초 밑으로는 내려가지 않도록 함
+        const atDiff = Math.max(0, Math.ceil((expMs - now) / 1000));
+        setAtTimeLeft(atDiff);
+        
+        // Refresh Token 타이머는 가상으로 1초씩 줄어들게 구현 (실제 RT는 쿠키에 있어서 못 읽음)
+        setRtTimeLeft((prev) => (prev !== null && prev > 0 ? prev - 1 : prev));
 
-        if (diff <= 0) {
-          clearInterval(interval);
+        // 🔄 [자동 갱신 트리거]
+        // 토큰 죽기 2초 전(atDiff === 2)이고, 자동 갱신이 켜져 있다면(autoRefresh) 백그라운드 갱신 시도!
+        if (atDiff === 2 && !loading && autoRefresh) {
+          console.log('🔄 [Background] Access Token 만료 임박. 자동 갱신을 시도합니다...');
+          handleAutoRefresh();
         }
       }, 1000);
 
-      return () => clearInterval(interval);
+      return () => clearInterval(interval); // 컴포넌트가 사라지거나 토큰이 바뀌면 타이머 정리
     } catch (e) {
-      console.error('Failed to parse JWT', e);
+      console.error(e);
     }
-  }, [accessToken]);
+  }, [accessToken, autoRefresh]);
 
+
+  // ==================================================================================
+  // 3. 핵심 동작 함수 (Helper Functions)
+  // ==================================================================================
+
+  // 📝 로그 추가 헬퍼: 현재 시간과 함께 메시지를 기록함
   const addLog = (msg: string) => {
     const time = new Date().toLocaleTimeString('ko-KR', { hour12: false });
     setLogs(prev => [...prev, `[${time}] ${msg}`]);
   };
 
-  // 1. ID/PW Login Handler
-  const handleLocalLogin = async () => {
+  /**
+   * 🚀 로그인 (1단계)
+   * - 아이디/비번을 서버로 보냅니다.
+   * - 성공하면 Access Token(변수)과 Refresh Token(쿠키)을 받습니다.
+   */
+  const handleLogin = async () => {
     setLoading(true);
-    addLog(`🔵 [Client] ID/PW 로그인 시도... (토큰 수명: ${expiresIn}초)`);
-    addLog('🔵 [Client] POST /auth/login (admin / 1234)');
+    addLog(`🔵 [1단계] 로그인 시도... (설정: AT=${expiresIn}초, RT=${refreshTokenLife}초)`);
     
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/auth/login`, {
+      // 로그인 요청 시 '테스트용'으로 우리가 설정한 수명 시간도 같이 보냅니다.
+      const res = await fetch(`/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'admin', password: '1234', expiresInSeconds: expiresIn }),
+        body: JSON.stringify({ 
+            username: 'admin', 
+            password: '1234', 
+            expiresInSeconds: expiresIn,
+            refreshTokenExpiresInSeconds: refreshTokenLife
+        }),
       });
       
       if (!res.ok) throw new Error('로그인 실패');
       
       const data = await res.json();
-      addLog(`🟢 [Server] 인증 성공! 엑세스 토큰 발급됨. (만료: ${data.expiresIn}s)`);
-      addLog('🟢 [Server] Refresh Token 쿠키 설정 완료 (HttpOnly).');
       
+      // ✅ 중요: Access Token은 자바스크립트 변수(State)에만 저장합니다. (XSS 방어 유리)
       setAccessToken(data.access_token);
       setUser(data.user);
-      addLog('✅ [Client] 로그인 완료.');
+      
+      // 가상 RT 타이머 시작
+      setRtTimeLeft(refreshTokenLife);
+      
+      addLog(`🟢 [성공] 서버로부터 토큰 발급 완료.`);
+      addLog(`   - Access Token: 저장됨 (메모리, 새로고침하면 사라짐)`);
+      addLog(`   - Refresh Token: 쿠키에 저장됨 (브라우저가 알아서 관리, HttpOnly)`);
+      addLog(`✅ 로그인 완료. 이제 데이터를 조회할 수 있습니다.`);
+
     } catch (err) {
-      addLog('🔴 [Error] 로그인 실패. 백엔드 연결을 확인하세요.');
-      console.error(err);
+      addLog(`🔴 [실패] 로그인 오류: ${err}`);
     } finally {
       setLoading(false);
     }
   };
 
-  // 2. OAuth Handlers
-  const handleGoogleLogin = () => {
-    const clientId = customClientId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    
-    if (!clientId) {
-      addLog('🔴 [Error] Client ID가 없습니다. .env 설정 또는 Custom Mode를 사용하세요.');
-      return;
-    }
-    
-    addLog('🔵 [Client] Google OAuth Flow 시작...');
-    if (customClientId) addLog(`� [Client] Custom Client ID 사용: ${clientId.substring(0, 10)}...`);
-    
-    const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: window.location.origin,
-      response_type: 'code',
-      scope: 'email profile',
-      access_type: 'offline',
-      prompt: 'consent',
-    });
-    
-    // Save state
-    localStorage.setItem('demo_logs', JSON.stringify([...logs, '🔵 [Client] Google 로그인 페이지로 리디렉션...']));
-    localStorage.setItem('demo_expires_in', String(expiresIn));
-    if (customClientId) localStorage.setItem('demo_custom_client_id', customClientId);
-    if (customClientSecret) localStorage.setItem('demo_custom_client_secret', customClientSecret);
-    
-    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-  };
-
-  // Restore State on Mount
-  useEffect(() => {
-    const savedLogs = localStorage.getItem('demo_logs');
-    if (savedLogs) {
-      setLogs(JSON.parse(savedLogs));
-      localStorage.removeItem('demo_logs');
-    }
-    
-    const savedExpiresIn = localStorage.getItem('demo_expires_in');
-    if (savedExpiresIn) {
-        setExpiresIn(Number(savedExpiresIn));
-        localStorage.removeItem('demo_expires_in');
-    }
-
-    const savedClientId = localStorage.getItem('demo_custom_client_id');
-    const savedClientSecret = localStorage.getItem('demo_custom_client_secret');
-    
-    if (savedClientId) {
-        setCustomClientId(savedClientId);
-        setShowCustomCreds(true);
-        localStorage.removeItem('demo_custom_client_id');
-    }
-    if (savedClientSecret) {
-        setCustomClientSecret(savedClientSecret);
-        localStorage.removeItem('demo_custom_client_secret');
-    }
-
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-
-    if (code) {
-      window.history.replaceState({}, document.title, window.location.pathname);
-      handleOAuthExchange(code, savedExpiresIn ? Number(savedExpiresIn) : 10, savedClientId, savedClientSecret);
-    }
-  }, []);
-
-  const handleOAuthExchange = async (code: string, exp: number, cId?: string | null, cSecret?: string | null) => {
-    setLoading(true);
-    addLog('🟢 [Client] Google 인증 코드(Code) 수신 완료.');
-    addLog(`� [Client] POST /auth/exchange (Code 교환 요청)`);
-
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/auth/exchange`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code,
-          clientId: cId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
-          clientSecret: cSecret || '',
-          redirectUri: window.location.origin,
-          expiresInSeconds: exp
-        }),
-      });
-      
-      const data = await res.json();
-      
-      if (!res.ok) throw new Error(data.message || 'Token exchange failed');
-      
-      const token = data.backend?.access_token || data.access_token;
-      
-      if (token) {
-        addLog('🟢 [Server] Google 토큰 교환 및 검증 성공!');
-        addLog(`🟢 [Server] 자체 JWT 발급 완료. (${exp}s 만료)`);
-        setAccessToken(token);
-        setUser(data.user);
-        addLog('✅ [Client] OAuth 로그인 완료.');
-      }
-    } catch (err: any) {
-      addLog(`🔴 [Error] 교환 실패: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleTestApi = async () => {
+  /**
+   * 📡 데이터 조회 요청 (2단계)
+   * - Access Token을 헤더에 실어서 보호된 API(/auth/me)를 찌릅니다.
+   * - 만약 토큰이 만료되었다면? -> api.ts 내부에서 자동으로 재발급(Refresh)을 시도합니다.
+   * - 이를 'Silent Refresh'라고 부르며, 사용자는 로그아웃되지 않고 계속 서비스를 쓸 수 있습니다.
+   */
+  const handleFetchData = async () => {
     if (!accessToken) return;
-    addLog('🔵 [Client] GET /auth/me (Protected Route)');
-    addLog(`🔑 Header: Bearer ${accessToken.substring(0, 15)}...`);
     
+    // UI 표시용: 이미 만료된 상태인지 체크
+    const isClientExpired = atTimeLeft === 0;
+    
+    if (isClientExpired) {
+        addLog(`🟡 [주의] Access Token이 만료된 상태입니다. 요청 시 'Silent Refresh'가 시도됩니다...`);
+    }
+
+    addLog(`🔵 [2단계] 보호된 데이터 조회 요청 (GET /auth/me)...`);
+
     try {
-      const { response: res, newAccessToken } = await api.request('/auth/me', {}, accessToken);
+      // 🛠️ api.request 내부 로직: 
+      // 1. 요청 보냄 -> 401(만료) 응답 받음
+      // 2. /auth/refresh 로 재발급 요청 (쿠키가 자동 전송됨)
+      // 3. 재발급 성공하면 원래 요청 다시 보냄
+      // 4. 새로운 Access Token을 반환해줌 -> 우리가 여기서 state 업데이트
+      const { response: res, newAccessToken } = await api.request('/auth/me', {}, accessToken, expiresIn);
       
       if (newAccessToken) {
-        addLog('🔄 [Client] Access Token이 자동으로 갱신되었습니다 (Silent Refresh).');
+        addLog('🎉 [Silent Refresh 성공] Access Token이 만료되어 자동으로 갱신되었습니다!');
+        // 갱신된 토큰으로 갈아끼우기 (로그인 연장)
         setAccessToken(newAccessToken);
       }
 
       if (!res.ok) throw new Error('API 요청 실패');
 
       const data = await res.json();
-      addLog(`🟢 [Server] 200 OK: ${data.username || data.email}`);
+      addLog(`🟢 [성공] 데이터 수신 완료: 사용자명 = ${data.username}`);
+      
     } catch (err: any) {
-      if (err.message === 'Session expired') {
-          addLog('🔴 [Client] 세션 만료 (Refresh Token 유효기간 끝). 로그아웃.');
+      // 리프레시 토큰마저 만료되거나 없으면 여기서 에러가 잡힙니다.
+      if (err.message.includes('Refresh Failed')) {
+           addLog(`🔴 [완전 만료] ${err.message}. 다시 로그인하세요.`);
+           logout();
+      } else if (err.message === 'Session expired') {
+          addLog('🔴 [완전 만료] 세션이 만료되었습니다.');
           logout();
       } else {
-        addLog(`🔴 [Error] ${err.message}`);
+        addLog(`🔴 [오류] ${err.message}`);
       }
     }
   };
 
+  /**
+   * 🔄 백그라운드 자동 갱신 (Optional)
+   * - API 요청을 보낼 때가 아니라, 가만히 있어도 만료 직전에 알아서 갱신하는 함수입니다.
+   * - AT가 죽기 2초 전에 setInterval에 의해 호출됩니다.
+   */
+  const handleAutoRefresh = async () => {
+    if (!accessToken) return;
+    addLog(`🔄 [자동] Access Token 만료 2초 전, 백그라운드 자동 갱신 시도...`);
+    
+    try {
+      // /auth/refresh 엔드포인트는 쿠키에 있는 RT를 확인하고 새 AT를 줍니다.
+      const refreshRes = await fetch(`/auth/refresh`, { 
+          method: 'POST',
+          credentials: 'include', // 쿠키 필수!
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expiresInSeconds: expiresIn }) // 설정값 유지
+      });
+
+      if (refreshRes.ok) {
+        const data = await refreshRes.json();
+        setAccessToken(data.access_token);
+        addLog(`✨ [자동] 백그라운드 자동 갱신 성공! (수명 연장됨)`);
+      } else {
+        addLog('🔴 [자동] 자동 갱신 실패. (Refresh Token 만료됨)');
+        logout();
+      }
+    } catch (err) {
+      addLog('🔴 [자동] 오류 발생으로 갱신 실패.');
+    }
+  };
+
+  // 👋 로그아웃: 모든 상태 초기화
   const logout = () => {
     setAccessToken(null);
+    setRtTimeLeft(null);
     setUser(null);
-    addLog('👋 [Client] 로그아웃.');
+    addLog('👋 로그아웃 되었습니다.');
   };
 
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-slate-300 font-sans selection:bg-purple-500/30">
-      {/* Background Gradients */}
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-900/10 blur-[120px] rounded-full"/>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-cyan-900/10 blur-[120px] rounded-full"/>
-      </div>
-
-      <div className="relative max-w-7xl mx-auto p-4 lg:p-8 flex flex-col min-h-screen">
+      <div className="max-w-6xl mx-auto p-6 flex flex-col min-h-screen gap-8">
         
         {/* Header */}
-        <header className="mb-8 border-b border-white/5 pb-6">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-cyan-600 flex items-center justify-center shadow-lg shadow-purple-900/20">
-                  <Shield className="w-6 h-6 text-white" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-white tracking-tight">Auth Logic Playground</h1>
-                  <p className="text-xs text-slate-400 font-medium tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-cyan-400">
-                    SECURE AUTHENTICATION DEMO
-                  </p>
-                </div>
-              </div>
-              <p className="text-sm text-slate-500 max-w-lg">
-                JWT, OAuth 2.0, Refresh Token Rotation, 및 보안 로직을 시각화하여 테스트하는 대시보드입니다.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-3 w-full md:w-auto">
-               {/* Token Expiry Control */}
-               <div className="flex items-center justify-between md:justify-end gap-3 bg-white/5 p-2 rounded-lg border border-white/5">
-                  <span className="text-xs font-bold text-slate-400 px-2 flex items-center gap-1">
-                    <Activity className="w-3 h-3 text-cyan-400"/> Token Life:
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => setExpiresIn(Math.max(5, expiresIn - 5))} className="w-6 h-6 flex items-center justify-center bg-white/10 hover:bg-white/20 rounded text-xs">-</button>
-                    <div className="w-12 text-center font-mono font-bold text-cyan-400">{expiresIn}s</div>
-                    <button onClick={() => setExpiresIn(expiresIn + 5)} className="w-6 h-6 flex items-center justify-center bg-white/10 hover:bg-white/20 rounded text-xs">+</button>
-                  </div>
-               </div>
-
-               {/* Countdown */}
-               {accessToken && (
-                 <div className="flex items-center justify-between md:justify-center gap-2 bg-gradient-to-r from-purple-900/20 to-cyan-900/20 text-cyan-400 px-4 py-2 rounded-lg border border-cyan-500/20 font-mono text-sm font-bold shadow-[0_0_15px_rgba(34,211,238,0.1)]">
-                   <span className="animate-pulse">●</span>
-                   <span>Expires in: {timeLeft}s</span>
-                 </div>
-               )}
-            </div>
-          </div>
+        <header className="border-b border-white/5 pb-6">
+            <h1 className="text-3xl font-bold text-white mb-2">JWT 인증 흐름 테스트</h1>
+            <p className="text-slate-500">
+                1. 시간 설정 → 2. 로그인 → 3. 만료 대기 → 4. 데이터 요청 (자동 갱신 확인)
+            </p>
         </header>
 
-        {/* Main Content */}
-        <div className="flex-1 grid lg:grid-cols-12 gap-6 items-start">
-          
-          {/* Left Column: Logins (4 cols) */}
-          <div className="lg:col-span-4 flex flex-col gap-6">
+        {/* Configuration Section */}
+        <section>
+            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                <SettingsIcon /> 1. 토큰 수명 설정
+            </h2>
+            <SecurityControlPanel 
+                accessTokenLife={expiresIn}
+                setAccessTokenLife={setExpiresIn}
+                refreshTokenLife={refreshTokenLife}
+                setRefreshTokenLife={setRefreshTokenLife}
+            />
+            {/* Auto Refresh Toggle */}
+            <div className="flex items-center gap-3 mt-4 bg-[#15161a] p-3 rounded-xl border border-white/10 w-fit">
+                <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                        type="checkbox" 
+                        className="sr-only peer"
+                        checked={autoRefresh}
+                        onChange={(e) => setAutoRefresh(e.target.checked)}
+                    />
+                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-500/50 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div>
+                    <span className="ms-3 text-sm font-bold text-gray-300 select-none">자동 갱신 (Auto Refresh)</span>
+                </label>
+            </div>
+
+        </section>
+
+        {/* Action & Status Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             
-            {/* 1. Local Login */}
-            <div className={`relative group p-6 rounded-2xl border transition-all duration-300 ${accessToken ? 'bg-white/5 border-white/5 grayscale opacity-60' : 'bg-[#0f1014] border-white/10 hover:border-purple-500/30 shadow-xl'}`}>
-              <div className="absolute inset-0 bg-gradient-to-b from-purple-500/5 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"/>
-              
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Key className="w-4 h-4 text-purple-400"/> Local Auth
-                </h3>
-                <span className="text-[10px] font-bold bg-purple-500/10 text-purple-300 px-2 py-0.5 rounded border border-purple-500/20">CASE 1</span>
-              </div>
+            {/* Left: Actions and Visual Status */}
+            <div className="space-y-6">
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                    <Activity /> 2. 인증 상태 및 액션
+                </h2>
 
-              <div className="space-y-4 relative z-10">
-                <div className="bg-black/40 rounded-lg p-3 border border-white/5 text-xs font-mono space-y-1">
-                  <div className="flex justify-between text-slate-400"><span>User:</span> <span className="text-white">admin</span></div>
-                  <div className="flex justify-between text-slate-400"><span>Pass:</span> <span className="text-white">**** (1234)</span></div>
-                </div>
-                <button 
-                  onClick={handleLocalLogin}
-                  disabled={!!accessToken || loading}
-                  className="w-full h-11 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-lg shadow-lg shadow-purple-900/20 transition-all active:scale-[0.98] disabled:bg-slate-800 disabled:text-slate-500 flex items-center justify-center gap-2"
-                >
-                  {loading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> : <Lock className="w-4 h-4"/>}
-                  Sign In
-                </button>
-              </div>
-            </div>
-
-            {/* 2. Google Login */}
-            <div className={`relative group p-6 rounded-2xl border transition-all duration-300 ${accessToken ? 'bg-white/5 border-white/5 grayscale opacity-60' : 'bg-[#0f1014] border-white/10 hover:border-cyan-500/30 shadow-xl'}`}>
-              <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/5 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"/>
-              
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Globe className="w-4 h-4 text-cyan-400"/> OAuth 2.0
-                </h3>
-                <span className="text-[10px] font-bold bg-cyan-500/10 text-cyan-300 px-2 py-0.5 rounded border border-cyan-500/20">CASE 2</span>
-              </div>
-
-              <div className="space-y-4 relative z-10">
-                <div className="flex items-center justify-between">
-                   <p className="text-xs text-slate-400">Google 계정으로 로그인</p>
-                   <button 
-                     onClick={() => setShowCustomCreds(!showCustomCreds)}
-                     className={`text-[10px] flex items-center gap-1 px-2 py-1 rounded transition-colors ${showCustomCreds ? 'bg-cyan-900/30 text-cyan-300' : 'bg-white/5 text-slate-400 hover:text-white'}`}
-                   >
-                     <Settings className="w-3 h-3"/> Custom App
-                   </button>
-                </div>
-
-                {/* Custom Credentials Form */}
-                {showCustomCreds && (
-                  <div className="space-y-3 bg-black/40 p-3 rounded-lg border border-white/10 animate-in slide-in-from-top-2">
-                    <div>
-                      <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Client ID</label>
-                      <input 
-                        className="w-full bg-[#111] border border-white/10 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors placeholder:text-slate-700" 
-                        placeholder={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? "Default (.env)" : "Enter Client ID"}
-                        value={customClientId}
-                        onChange={e => setCustomClientId(e.target.value)}
-                      />
+                {/* Status Card */}
+                <div className={`p-6 rounded-2xl border transition-all ${accessToken ? 'bg-purple-900/10 border-purple-500/30' : 'bg-[#15161a] border-white/10'}`}>
+                    <div className="flex justify-between items-start mb-6">
+                        <div>
+                            <p className="text-xs uppercase font-bold text-slate-500 mb-1">Current Status</p>
+                            <div className="text-2xl font-bold text-white flex items-center gap-2">
+                                {accessToken ? (
+                                    <>
+                                        <CheckCircle className="text-emerald-400" />
+                                        <span>로그인됨</span>
+                                    </>
+                                ) : (
+                                    <span className="text-slate-500">로그아웃 상태</span>
+                                )}
+                            </div>
+                        </div>
+                        {accessToken && (
+                            <button onClick={logout} className="text-xs bg-red-500/10 text-red-400 px-3 py-1.5 rounded hover:bg-red-500/20">
+                                로그아웃
+                            </button>
+                        )}
                     </div>
-                    <div>
-                      <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Client Secret</label>
-                      <input 
-                        type="password"
-                        className="w-full bg-[#111] border border-white/10 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors placeholder:text-slate-700" 
-                        placeholder="Enter Client Secret"
-                        value={customClientSecret}
-                        onChange={e => setCustomClientSecret(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                )}
 
-                <button 
-                  onClick={handleGoogleLogin}
-                  disabled={!!accessToken || loading}
-                  className="w-full h-11 bg-white hover:bg-gray-100 text-slate-900 font-bold rounded-lg shadow-lg transition-all active:scale-[0.98] disabled:bg-slate-800 disabled:text-slate-500 flex items-center justify-center gap-2"
-                >
-                   {loading ? <div className="w-4 h-4 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin"/> : <Smartphone className="w-4 h-4"/>}
-                  Google Login
-                </button>
-              </div>
-            </div>
+                    {/* Timer Visuals */}
+                    {accessToken && (
+                        <div className="space-y-4">
+                            {/* Access Token Timer */}
+                            <div>
+                                <div className="flex justify-between text-xs mb-1">
+                                    <span className={atTimeLeft === 0 ? "text-red-400 font-bold" : "text-cyan-400"}>Access Token (메모리)</span>
+                                    <span className="font-mono">{atTimeLeft === 0 ? "만료됨 (Expired)" : `${atTimeLeft ?? expiresIn}초 남음`}</span>
+                                </div>
+                                <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                                    <div 
+                                        className={`h-full transition-all duration-1000 ${atTimeLeft === 0 ? 'bg-red-500' : 'bg-cyan-500'}`}
+                                        style={{ width: `${Math.min(100, (atTimeLeft! / expiresIn) * 100)}%` }}
+                                    />
+                                </div>
+                                {atTimeLeft === 0 && (
+                                    <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1">
+                                        <AlertTriangle className="w-3 h-3"/>
+                                        다음 요청 시 Refresh Token을 사용하여 재발급을 시도합니다.
+                                    </p>
+                                )}
+                            </div>
 
-          </div>
-
-          {/* Right Column: Console & Action (8 cols) */}
-          <div className="lg:col-span-8 flex flex-col gap-6 h-full min-h-[500px]">
-            
-            {/* Terminal Window */}
-            <div className="flex-1 bg-[#0f1014] rounded-2xl border border-white/10 flex flex-col shadow-2xl relative overflow-hidden group">
-              {/* Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-white/5">
-                <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
-                  <Terminal className="w-3.5 h-3.5" />
-                  <span>debug_console.log</span>
+                            {/* Refresh Token Info */}
+                             <div>
+                                <div className="flex justify-between text-xs mb-1">
+                                    <span className={rtTimeLeft === 0 ? "text-red-400 font-bold" : "text-emerald-400"}>Refresh Token (HttpOnly 쿠키)</span>
+                                    <span className="font-mono">
+                                        {rtTimeLeft === null ? "대기 중" : 
+                                         rtTimeLeft === 0 ? "만료됨 (Expired)" : `${rtTimeLeft}초 남음`}
+                                    </span>
+                                </div>
+                                <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                                     <div 
+                                        className={`h-full transition-all duration-1000 ${rtTimeLeft === 0 ? 'bg-red-500' : 'bg-emerald-500'}`}
+                                        style={{ width: `${Math.min(100, (rtTimeLeft! / refreshTokenLife) * 100)}%` }}
+                                     />
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
-                <div className="flex gap-1.5">
-                  <div className="w-2.5 h-2.5 rounded-full bg-red-500/20 border border-red-500/50"/>
-                  <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/20 border border-yellow-500/50"/>
-                  <div className="w-2.5 h-2.5 rounded-full bg-green-500/20 border border-green-500/50"/>
-                </div>
-              </div>
 
-              {/* Log Content */}
-              <div className="flex-1 p-4 font-mono text-xs md:text-sm overflow-y-auto space-y-1.5 custom-scrollbar bg-black/50 backdrop-blur-sm">
-                {logs.length === 0 && (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-700 opacity-50 space-y-3">
-                    <Code className="w-12 h-12 stroke-[1]"/>
-                    <p>Ready to capture auth events...</p>
-                  </div>
-                )}
-                {logs.map((log, i) => (
-                   <div key={i} className="animate-in fade-in slide-in-from-left-2 duration-200 pl-2 border-l-2 border-transparent hover:border-white/10 hover:bg-white/5 py-0.5 rounded-r">
-                     <span className="text-slate-600 mr-2">{log.substring(0, 10)}</span>
-                     <span className={
-                        log.includes('[Error]') ? 'text-red-400 font-bold' :
-                        log.includes('[Server]') ? 'text-emerald-400' :
-                        log.includes('🔑') ? 'text-yellow-400' :
-                        'text-slate-300'
-                     }>
-                       {log.substring(11)}
-                     </span>
-                   </div>
-                ))}
-                <div ref={logsEndRef}/>
-              </div>
-            </div>
-
-            {/* Authenticated Zone */}
-            <div className={`rounded-2xl border border-white/10 p-1 relative overflow-hidden transition-all duration-500 ${!accessToken ? 'opacity-50 grayscale pointer-events-none' : 'shadow-[0_0_30px_rgba(168,85,247,0.15)] bg-gradient-to-br from-[#0f1014] to-purple-900/10'}`}>
-              <div className="bg-[#0f1014]/80 backdrop-blur rounded-xl p-5 md:p-6 flex flex-col md:flex-row items-center justify-between gap-6">
-                 
-                 <div className="flex items-center gap-4 w-full md:w-auto">
-                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-900/20 shrink-0">
-                      <CheckCircle className="w-6 h-6 text-white"/>
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-white text-lg">Protected Session</h3>
-                      <p className="text-sm text-slate-400">Authenticated as <span className="text-emerald-400 font-mono">{user?.email || 'admin'}</span></p>
-                    </div>
-                 </div>
-
-                 <div className="flex items-center gap-3 w-full md:w-auto">
-                    <button 
-                      onClick={handleTestApi}
-                      className="flex-1 md:flex-none px-6 py-3 bg-white/5 hover:bg-white/10 hover:text-white text-slate-300 font-bold rounded-lg border border-white/10 focus:outline-none transition-all flex items-center justify-center gap-2 group"
+                {/* Actions */}
+                <div className="grid grid-cols-2 gap-4">
+                    <button
+                        onClick={handleLogin}
+                        disabled={!!accessToken || loading}
+                        className="h-14 bg-white text-black font-bold rounded-xl hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex items-center justify-center gap-2"
                     >
-                      <Server className="w-4 h-4 text-purple-400 group-hover:text-purple-300"/>
-                      Test API
+                         <Key className="w-5 h-5"/>
+                         로그인 (1단계)
                     </button>
-                    <button 
-                      onClick={logout}
-                      className="px-4 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold rounded-lg border border-red-500/10 transition-colors"
+
+                    <button
+                        onClick={handleFetchData}
+                        disabled={!accessToken || loading}
+                        className={`h-14 font-bold rounded-xl border flex items-center justify-center gap-2 transition-all ${
+                            atTimeLeft === 0 
+                            ? 'bg-yellow-500 text-black border-yellow-500 hover:bg-yellow-400 animate-pulse' 
+                            : 'bg-[#15161a] text-white border-white/20 hover:bg-white/5'
+                        } disabled:opacity-20 disabled:animate-none`}
                     >
-                      <LogOut className="w-4 h-4"/>
+                         <Server className="w-5 h-5"/>
+                         데이터 조회 {atTimeLeft === 0 && "(갱신 시도)"}
                     </button>
-                 </div>
-              </div>
+                </div>
             </div>
 
-          </div>
+            {/* Right: Logs */}
+            <div className="flex flex-col">
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                    <Terminal /> 3. 시스템 로그
+                </h2>
+                <div className="h-[500px] bg-[#0f1014] rounded-2xl border border-white/10 p-4 font-mono text-xs overflow-y-auto custom-scrollbar relative shadow-inner">
+                    {/* Clear Button */}
+                    <button 
+                        onClick={() => setLogs([])} 
+                        className="absolute top-4 right-4 text-[10px] bg-white/10 px-2 py-1 rounded hover:bg-white/20 text-slate-400"
+                    >
+                        지우기
+                    </button>
+
+                    {logs.length === 0 && (
+                        <div className="flex flex-col items-center justify-center h-full text-slate-600 space-y-2">
+                            <Code className="w-8 h-8"/>
+                            <p>로그 대기 중...</p>
+                        </div>
+                    )}
+                    
+                    <div className="space-y-1.5">
+                        {logs.map((log, i) => (
+                        <div key={i} className="break-all pl-2 border-l-2 border-transparent hover:border-white/20">
+                            {log}
+                        </div>
+                        ))}
+                        <div ref={logsEndRef}/>
+                    </div>
+                </div>
+            </div>
         </div>
+
       </div>
     </div>
   );
+}
+
+function SettingsIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+    )
 }
