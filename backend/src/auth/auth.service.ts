@@ -60,13 +60,29 @@ export class AuthService {
   async refresh(refreshToken: string, expiresInSeconds?: number) {
     try {
       const payload = this.jwtService.verify(refreshToken);
-      // In a real app, check if user still exists or if token is revoked in DB
-      const newPayload = { username: payload.username, sub: payload.sub, email: payload.email };
       
-      const atExpires = expiresInSeconds ? `${expiresInSeconds}s` : '15m'; // Default to 15m if not provided
+      // 사용자 및 토큰 DB 검증 (필수 보안 로직)
+      const userId = Number(payload.sub);
+      const user = await this.usersService.findById(userId);
+      
+      if (!user) {
+         throw new Error('User not found');
+      }
+
+      // DB에 저장된 토큰과 일치하는지 확인 (토큰 탈취 방지)
+      if (user.refreshToken !== refreshToken) {
+          console.warn(`⚠️ [Security] Refresh Token mismatch for user ${user.id}. Possible reuse/theft.`);
+          throw new Error('Invalid refresh token (Mismatch)');
+      }
+
+      const newPayload = { username: user.username, sub: user.id, email: user.email };
+      
+      const atExpires = expiresInSeconds ? `${expiresInSeconds}s` : '15m'; // Default to 15m
       
       return {
         access_token: this.jwtService.sign(newPayload, { expiresIn: atExpires }), 
+        // Rotation (선택): 여기서 새 Refresh Token을 발급하고 DB를 업데이트할 수도 있습니다.
+        // 현재는 액세스 토큰만 재발급합니다.
       };
     } catch (e) {
       console.error('❌ [Backend] JWT Verify Error:', e.name, e.message);
