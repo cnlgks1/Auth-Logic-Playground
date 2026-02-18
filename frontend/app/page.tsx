@@ -254,7 +254,13 @@ export default function LoginPage() {
   }, []);
 
   // 🚀 [Step B] 인증 코드를 백엔드로 보내서 토큰 교환 (위치 이동 및 자동화 대응)
-  const handleGoogleExchange = async (codeOverride?: string, expiresInOverride?: number, rtExpiresInOverride?: number) => {
+  const handleGoogleExchange = async (
+    codeOverride?: string, 
+    expiresInOverride?: number, 
+    rtExpiresInOverride?: number,
+    clientIdOverride?: string,
+    clientSecretOverride?: string
+  ) => {
       const codeToUse = codeOverride || googleCode;
       if (!codeToUse) return;
 
@@ -264,6 +270,10 @@ export default function LoginPage() {
       // 1. 설정값 결정 (인자값 -> State -> 기본값)
       const finalExpiresIn = expiresInOverride || expiresIn;
       const finalRtExpiresIn = rtExpiresInOverride || refreshTokenLife;
+      
+      // 2. 중요: 복구된 ID/Secret이 있으면 그걸 최우선으로 사용 (State 업데이트 늦음 방지)
+      const finalClientId = clientIdOverride || customClientId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+      const finalClientSecret = clientSecretOverride || customClientSecret || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET;
 
       try {
           const res = await fetch(`/auth/exchange`, {
@@ -272,8 +282,8 @@ export default function LoginPage() {
               body: JSON.stringify({ 
                   code: codeToUse,
                   // 하이브리드: 입력값 우선, 없으면 .env 값 전송
-                  clientId: customClientId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,         
-                  clientSecret: customClientSecret || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET, 
+                  clientId: finalClientId,         
+                  clientSecret: finalClientSecret, 
                   redirectUri: window.location.origin, // ⚡️ State 대신 직접 위도우 객체 사용 (확실함)
                   expiresInSeconds: finalExpiresIn,
                   refreshTokenExpiresInSeconds: finalRtExpiresIn
@@ -340,7 +350,8 @@ export default function LoginPage() {
         // [자동 실행] 실제 서비스처럼 바로 토큰 교환 요청!
         // (복구된 설정값을 인자로 전달하여 즉시 반영)
         addLog(`🚀 [자동] 사용자 클릭 없이 바로 토큰 교환을 시작합니다.`);
-        handleGoogleExchange(code, restoredExpiresIn, restoredRtExpiresIn);
+        // 중요: 복구된 ID/Secret도 인자로 직접 넘김 (State 업데이트 기다리지 않음)
+        handleGoogleExchange(code, restoredExpiresIn, restoredRtExpiresIn, savedClientId || undefined, savedClientSecret || undefined);
 
         // 코드를 URL에서 지워주는 센스 (선택)
         window.history.replaceState({}, document.title, window.location.pathname);
