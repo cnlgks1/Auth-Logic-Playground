@@ -278,11 +278,12 @@ export default function LoginPage() {
 
   // 🚀 [Step A] 구글 로그인 페이지로 이동
   const handleGoogleLogin = () => {
-      // 사용자 입력값이 있으면 우선 사용, 없으면 환경변수 사용
+      // 사용자 입력값이 있으면 우선 사용, 없으면 환경변수(.env) 사용 (하이브리드 방식)
       const clientId = customClientId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+      const clientSecret = customClientSecret || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET;
       
-      if (!clientId) {
-          alert("Client ID가 필요합니다. 설정을 입력하거나 .env를 확인하세요.");
+      if (!clientId || !clientSecret) {
+          alert("Client ID와 Client Secret이 필요합니다.\n\n1. 화면에 직접 입력하거나\n2. .env.local 파일에 설정하세요.");
           return;
       }
 
@@ -309,8 +310,9 @@ export default function LoginPage() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ 
                   code: googleCode,
-                  clientId: customClientId || undefined,         // 보낼 수도 있고
-                  clientSecret: customClientSecret || undefined, // 안 보내면 백엔드가 .env 씀
+                  // 하이브리드: 입력값 우선, 없으면 .env 값 전송
+                  clientId: customClientId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,         
+                  clientSecret: customClientSecret || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET, 
                   redirectUri: redirectUri,
                   expiresInSeconds: expiresIn,
                   refreshTokenExpiresInSeconds: refreshTokenLife
@@ -446,7 +448,7 @@ export default function LoginPage() {
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-400 mb-1.5">Client Secret (선택)</label>
+                                    <label className="block text-sm font-medium text-slate-400 mb-1.5">Client Secret (입력 시 우선 사용)</label>
                                     <input 
                                         type="password" 
                                         value={customClientSecret}
