@@ -74,14 +74,19 @@ export class AuthController {
   @Post('exchange') // 플레이그라운드용 수동 교환
   async exchangeToken(@Body() body: { code: string; clientId: string; clientSecret: string; redirectUri: string; expiresInSeconds?: number; refreshTokenExpiresInSeconds?: number }, @Res({ passthrough: true }) res) {
     const { code, redirectUri, expiresInSeconds, refreshTokenExpiresInSeconds } = body;
-    // 민감한 데이터(Secret)는 환경 변수 사용
+    // 1. Client ID/Secret 결정 (사용자 입력값 우선, 없으면 환경변수)
     const clientId = body.clientId || process.env.GOOGLE_CLIENT_ID;
     const clientSecret = body.clientSecret || process.env.GOOGLE_CLIENT_SECRET;
 
-    if (!clientSecret) {
-      throw new Error('백엔드 .env에 GOOGLE_CLIENT_SECRET이 설정되지 않았습니다');
+    if (body.clientId) {
+      console.log(`🔧 [Backend] 사용자 지정 Client ID 사용: ${body.clientId.substring(0, 10)}...`);
     }
 
+    if (!clientId || !clientSecret) {
+      throw new Error('Client ID 또는 Secret이 누락되었습니다. (입력값 또는 .env 확인 필요)');
+    }
+
+    // 2. 구글 토큰 교환 요청
     const result = await this.authService.exchangeCodeForToken(code, clientId, clientSecret, redirectUri, expiresInSeconds, refreshTokenExpiresInSeconds);
 
     // 구글 로그인 시에도 리프레시 토큰 쿠키 설정!

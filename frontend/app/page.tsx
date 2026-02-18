@@ -18,7 +18,7 @@ import SecurityControlPanel from '../components/SecurityControlPanel';
  * 핵심 개념:
  * 1. Access Token (AT): 수명이 짧음. API 요청 시 헤더(Authorization)에 담아 보냄. (메모리에 저장)
  * 2. Refresh Token (RT): 수명이 김. AT 재발급 용도. (브라우저 쿠키에 HttpOnly로 안전하게 저장)
- * 3. Silent Refresh: 사용자가 모르게 백그라운드에서 AT를 새로 받아오는 기술.
+ * 3. 자동 갱신: 사용자가 모르게 백그라운드에서 AT를 새로 받아오는 기술.
  * ----------------------------------------------------------------------------------
  */
 export default function LoginPage() {
@@ -160,7 +160,7 @@ export default function LoginPage() {
    * 📡 데이터 조회 요청 (2단계)
    * - Access Token을 헤더에 실어서 보호된 API(/auth/me)를 찌릅니다.
    * - 만약 토큰이 만료되었다면? -> api.ts 내부에서 자동으로 재발급(Refresh)을 시도합니다.
-   * - 이를 'Silent Refresh'라고 부르며, 사용자는 로그아웃되지 않고 계속 서비스를 쓸 수 있습니다.
+   * - 이를 '자동 갱신'이라고 부르며, 사용자는 로그아웃되지 않고 계속 서비스를 쓸 수 있습니다.
    */
   const handleFetchData = async () => {
     if (!accessToken) return;
@@ -169,7 +169,7 @@ export default function LoginPage() {
     const isClientExpired = atTimeLeft === 0;
     
     if (isClientExpired) {
-        addLog(`🟡 [주의] Access Token이 만료된 상태입니다. 요청 시 'Silent Refresh'가 시도됩니다...`);
+        addLog(`🟡 [주의] Access Token이 만료된 상태입니다. 요청 시 '자동 갱신'이 시도됩니다...`);
     }
 
     addLog(`🔵 [2단계] 보호된 데이터 조회 요청 (GET /auth/me)...`);
@@ -183,7 +183,7 @@ export default function LoginPage() {
       const { response: res, newAccessToken } = await api.request('/auth/me', {}, accessToken, expiresIn);
       
       if (newAccessToken) {
-        addLog('🎉 [Silent Refresh 성공] Access Token이 만료되어 자동으로 갱신되었습니다!');
+        addLog('🎉 [자동 갱신 성공] Access Token이 만료되어 자동으로 갱신되었습니다!');
         // 갱신된 토큰으로 갈아끼우기 (로그인 연장)
         setAccessToken(newAccessToken);
       }
@@ -195,7 +195,7 @@ export default function LoginPage() {
       
     } catch (err: any) {
       // 리프레시 토큰마저 만료되거나 없으면 여기서 에러가 잡힙니다.
-      if (err.message.includes('Refresh Failed')) {
+      if (err.message.includes('자동 갱신 실패') || err.message.includes('Refresh Failed')) {
            addLog(`🔴 [완전 만료] ${err.message}. 다시 로그인하세요.`);
            logout();
       } else if (err.message === 'Session expired') {
@@ -238,187 +238,417 @@ export default function LoginPage() {
     }
   };
 
+  // 🌐 OAuth 관련 상태
+  const [googleCode, setGoogleCode] = useState<string | null>(null);
+  const [oauthLoading, setOauthLoading] = useState(false);
+  
+  // ⚙️ OAuth 사용자 지정 설정 (내 키 사용하기)
+  const [showCustomSettings, setShowCustomSettings] = useState(false);
+  const [customClientId, setCustomClientId] = useState('');
+  const [customClientSecret, setCustomClientSecret] = useState('');
+  // Redirect URI는 기본적으로 현재 페이지로 고정 (구글 콘솔 설정 편의상)
+  const [redirectUri, setRedirectUri] = useState('');
+
+  useEffect(() => {
+    setRedirectUri(window.location.origin);
+  }, []);
+
+  // 🔗 URL에서 인증 코드(Code) 감지
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    if (code) {
+        setGoogleCode(code);
+        addLog(`✨ [OAuth] 구글에서 인증 코드(Code)를 받아왔습니다!`);
+        addLog(`   - Code: ${code.substring(0, 15)}...`);
+        
+        // 코드를 URL에서 지워주는 센스 (선택)
+        window.history.replaceState({}, document.title, "/");
+    }
+  }, []);
+
   // 👋 로그아웃: 모든 상태 초기화
   const logout = () => {
     setAccessToken(null);
     setRtTimeLeft(null);
     setUser(null);
+    setGoogleCode(null);
     addLog('👋 로그아웃 되었습니다.');
+  };
+
+  // 🚀 [Step A] 구글 로그인 페이지로 이동
+  const handleGoogleLogin = () => {
+      // 사용자 입력값이 있으면 우선 사용, 없으면 환경변수 사용
+      const clientId = customClientId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+      
+      if (!clientId) {
+          alert("Client ID가 필요합니다. 설정을 입력하거나 .env를 확인하세요.");
+          return;
+      }
+
+      const targetUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=email%20profile`;
+      
+      // 사용자 설정을 썼다면 로컬 스토리지 등에 저장해두면 좋겠지만, 일단 상태 유지 차원에서 로그만 남김
+      if (customClientId) {
+          addLog(`🔧 [Custom] 사용자 지정 Client ID로 로그인합니다.`);
+      }
+
+      addLog(`👉 [OAuth] 구글 로그인 페이지로 이동합니다...`);
+      window.location.href = targetUrl;
+  };
+
+  // 🚀 [Step B] 인증 코드를 백엔드로 보내서 토큰 교환
+  const handleGoogleExchange = async () => {
+      if (!googleCode) return;
+      setOauthLoading(true);
+      addLog(`🔵 [OAuth] 인증 코드를 백엔드로 전송하여 토큰 교환 요청...`);
+
+      try {
+          const res = await fetch(`/auth/exchange`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                  code: googleCode,
+                  clientId: customClientId || undefined,         // 보낼 수도 있고
+                  clientSecret: customClientSecret || undefined, // 안 보내면 백엔드가 .env 씀
+                  redirectUri: redirectUri,
+                  expiresInSeconds: expiresIn,
+                  refreshTokenExpiresInSeconds: refreshTokenLife
+              })
+          });
+
+          if (!res.ok) {
+              const errText = await res.text();
+              throw new Error(errText);
+          }
+
+          const data = await res.json();
+          
+          setAccessToken(data.backend.access_token);
+          setUser(data.user);
+          setRtTimeLeft(refreshTokenLife); // 가상 타이머
+          
+          addLog(`🟢 [OAuth 성공] 구글 인증 완료! JWT 토큰이 발급되었습니다.`);
+          addLog(`   - Access Token: ${data.backend.access_token.substring(0, 15)}...`);
+          addLog(`   - User: ${data.user.email} (${data.user.username})`);
+
+      } catch (err: any) {
+          addLog(`🔴 [OAuth 실패] 토큰 교환 중 오류 발생: ${err.message}`);
+      } finally {
+          setOauthLoading(false);
+      }
   };
 
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-slate-300 font-sans selection:bg-purple-500/30">
-      <div className="max-w-6xl mx-auto p-6 flex flex-col min-h-screen gap-8">
+      <div className="max-w-5xl mx-auto p-6 flex flex-col min-h-screen gap-10">
         
         {/* Header */}
-        <header className="border-b border-white/5 pb-6">
-            <h1 className="text-3xl font-bold text-white mb-2">JWT 인증 흐름 테스트</h1>
-            <p className="text-slate-500">
-                1. 시간 설정 → 2. 로그인 → 3. 만료 대기 → 4. 데이터 요청 (자동 갱신 확인)
+        <header className="border-b border-white/5 pb-6 text-center">
+            <h1 className="text-3xl font-bold text-white mb-3">🗝️ 인증 로직 플레이그라운드</h1>
+            <p className="text-slate-500 max-w-2xl mx-auto">
+                      이곳은 <b>로그인(인증)의 원리</b>를 눈으로 확인하는 실험실입니다.
+                      {/* <br /> */}
+                {/* 어떤 방식으로 들어오든, 결국 <b>'토큰(Token)'</b>이라는 입장권을 받게 된다는 점을 기억하세요. */}
             </p>
         </header>
 
-        {/* Configuration Section */}
-        <section>
-            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                <SettingsIcon /> 1. 토큰 수명 설정
-            </h2>
-            <SecurityControlPanel 
+        {/* 0. 환경 설정 */}
+        <section className="bg-slate-900/50 p-5 rounded-2xl border border-white/5">
+             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                <h2 className="text-sm font-bold text-slate-400 flex items-center gap-2">
+                    <SettingsIcon /> 0. 환경 설정 (토큰 수명)
+                </h2>
+                
+                {/* Auto Refresh Toggle (Moved here) */}
+                <div className="flex items-center gap-3 bg-[#15161a] px-3 py-1.5 rounded-lg border border-white/10">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            className="sr-only peer"
+                            checked={autoRefresh}
+                            onChange={(e) => setAutoRefresh(e.target.checked)}
+                        />
+                        <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div>
+                        <span className="ms-2 text-xs font-bold text-gray-300 select-none">자동 연장 켜기</span>
+                    </label>
+                </div>
+             </div>
+             
+             <SecurityControlPanel 
                 accessTokenLife={expiresIn}
                 setAccessTokenLife={setExpiresIn}
                 refreshTokenLife={refreshTokenLife}
                 setRefreshTokenLife={setRefreshTokenLife}
             />
-            {/* Auto Refresh Toggle */}
-            <div className="flex items-center gap-3 mt-4 bg-[#15161a] p-3 rounded-xl border border-white/10 w-fit">
-                <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                        type="checkbox" 
-                        className="sr-only peer"
-                        checked={autoRefresh}
-                        onChange={(e) => setAutoRefresh(e.target.checked)}
-                    />
-                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-500/50 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div>
-                    <span className="ms-3 text-sm font-bold text-gray-300 select-none">자동 갱신 (Auto Refresh)</span>
-                </label>
-            </div>
-
         </section>
 
-        {/* Action & Status Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* 메인 그리드 */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             
-            {/* Left: Actions and Visual Status */}
-            <div className="space-y-6">
-                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                    <Activity /> 2. 인증 상태 및 액션
-                </h2>
+            {/* 왼쪽: 인증 절차 (Step 1 -> Step 2 -> Step 3) */}
+            <div className="lg:col-span-8 space-y-8">
+                
+                {/* Step 1. 로그인 방식 선택 */}
+                <section className={`transition-opacity duration-300 ${accessToken ? 'opacity-50 pointer-events-none grayscale' : 'opacity-100'}`}>
+                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <span className="bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">1</span>
+                        로그인 방식 선택
+                    </h2>
+                    
+                    <div className="flex flex-col gap-6">
+                        {/* Option A: 일반 로그인 */}
+                        <div className="bg-[#15161a] p-5 rounded-2xl border border-white/10 flex flex-col relative overflow-hidden group hover:border-blue-500/30 transition-colors">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-slate-700"></div>
+                            <h3 className="text-white font-bold mb-2 flex items-center gap-2">
+                                <Key className="w-4 h-4 text-slate-400"/> A. 아이디/비번 입장
+                            </h3>
+                            <p className="text-xs text-slate-500 mb-4 h-8">
+                                전통적인 방식입니다. 아이디와 비밀번호를 서버로 보냅니다.
+                            </p>
+                            <button
+                                onClick={handleLogin}
+                                disabled={!!accessToken || loading}
+                                className="mt-auto h-12 bg-white text-black font-bold rounded-lg hover:bg-slate-200 transition-colors shadow-lg flex items-center justify-center gap-2"
+                            >
+                                로그인 (admin / 1234)
+                            </button>
+                        </div>
 
-                {/* Status Card */}
-                <div className={`p-6 rounded-2xl border transition-all ${accessToken ? 'bg-purple-900/10 border-purple-500/30' : 'bg-[#15161a] border-white/10'}`}>
-                    <div className="flex justify-between items-start mb-6">
-                        <div>
-                            <p className="text-xs uppercase font-bold text-slate-500 mb-1">현재 상태</p>
-                            <div className="text-2xl font-bold text-white flex items-center gap-2">
-                                {accessToken ? (
-                                    <>
-                                        <CheckCircle className="text-emerald-400" />
-                                        <span>로그인됨</span>
-                                    </>
-                                ) : (
-                                    <span className="text-slate-500">로그아웃 상태</span>
+                        {/* Option B: 구글 로그인 */}
+                        <div className="bg-[#15161a] p-5 rounded-2xl border border-white/10 flex flex-col relative overflow-hidden group hover:border-blue-500/30 transition-colors">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-[#4285F4]"></div>
+                            <div className="flex justify-between items-start mb-2">
+                                <h3 className="text-white font-bold flex items-center gap-2">
+                                    <Shield className="w-4 h-4 text-[#4285F4]"/> B. 구글 계정 입장
+                                </h3>
+                            </div>
+                            
+                            <p className="text-xs text-slate-500 mb-4">
+                                테스트할 구글 Client ID와 Secret을 입력하세요.<br/>
+                                <span className="opacity-50">(로컬 환경이면 자동 입력됩니다)</span>
+                            </p>
+
+                            {/* Credentials Input Fields (Always Visible) */}
+                            <div className="mb-4 bg-black/40 p-3 rounded-lg border border-white/10 space-y-4">
+                                <div className="text-xs text-slate-400 flex justify-between">
+                                    <span>구글 콘솔에서 발급받은 키 입력</span>
+                                    <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">발급받기 ↗</a>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-400 mb-1.5">Client ID</label>
+                                    <input 
+                                        type="text" 
+                                        value={customClientId}
+                                        onChange={(e) => setCustomClientId(e.target.value)}
+                                        placeholder="76xxx...apps.googleusercontent.com"
+                                        className="w-full bg-[#0a0a0c] border border-white/10 rounded-lg px-3 py-3 text-sm text-white focus:border-blue-500 outline-none placeholder:text-slate-600 transition-colors"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-400 mb-1.5">Client Secret (선택)</label>
+                                    <input 
+                                        type="password" 
+                                        value={customClientSecret}
+                                        onChange={(e) => setCustomClientSecret(e.target.value)}
+                                        placeholder="백엔드에 설정돼 있다면 비워두세요"
+                                        className="w-full bg-[#0a0a0c] border border-white/10 rounded-lg px-3 py-3 text-sm text-white focus:border-blue-500 outline-none placeholder:text-slate-600 transition-colors"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-400 mb-1.5">Redirect URI (자동)</label>
+                                    <div className="w-full bg-[#0a0a0c]/50 border border-white/5 rounded-lg px-3 py-3 text-sm text-slate-500 font-mono truncate">
+                                        {redirectUri}
+                                    </div>
+                                    <p className="text-xs text-slate-600 mt-1">* 구글 콘솔에 이 URI를 반드시 추가해야 합니다.</p>
+                                </div>
+                            </div>
+                            
+                            {/* OAuth Flow UI */}
+                            {!googleCode ? (
+                                <button 
+                                    onClick={handleGoogleLogin}
+                                    disabled={!!accessToken}
+                                    className="mt-auto h-12 bg-[#4285F4] hover:bg-[#3367D6] text-white font-bold rounded-lg flex items-center justify-center gap-2 transition-colors"
+                                >
+                                    <svg className="w-4 h-4" viewBox="0 0 24 24"><path fill="currentColor" d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 6.96-6.51 6.96C8.25 20.79 5.09 17.6 5.09 13.9c0-3.7 3.16-6.89 6.89-6.89c1.67 0 3.17.6 4.35 1.57l2.13-2.13C16.89 4.88 14.77 4.1 12 4.1C6.6 4.1 2.21 8.5 2.21 13.9c0 5.4 4.39 9.8 9.79 9.8c5.65 0 9.49-4.1 9.49-9.8c0-.65-.07-1.28-.14-1.8Z"/></svg>
+                                    구글 로그인창 열기
+                                </button>
+                            ) : (
+                                <div className="mt-auto flex flex-col gap-2">
+                                    <div className="text-[10px] text-emerald-400 font-mono bg-emerald-950/30 px-2 py-1 rounded truncate">
+                                        Code: {googleCode}
+                                    </div>
+                                    <button 
+                                        onClick={handleGoogleExchange}
+                                        disabled={oauthLoading}
+                                        className="h-9 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold rounded-lg flex items-center justify-center gap-2 animate-pulse"
+                                    >
+                                        {oauthLoading ? '토큰 교환 (로그인 완료)' : '코드로 입장권(Token) 받기'}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </section>
+                
+                {/* 화살표 장식 */}
+                <div className="flex justify-center -my-2 opacity-30">
+                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5V19M12 19L19 12M12 19L5 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </div>
+
+                {/* Step 2. 인증 상태 (통합됨) */}
+                <section>
+                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <span className="bg-purple-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">2</span>
+                        발급된 신분증 (로그인 상태)
+                    </h2>
+                    
+                    <div className={`p-6 rounded-2xl border transition-all relative overflow-hidden ${accessToken ? 'bg-purple-900/10 border-purple-500/50' : 'bg-[#15161a] border-white/10'}`}>
+                        {!accessToken && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] z-10">
+                                <p className="text-slate-500 text-sm font-bold">로그인 전입니다. 위에서 입장 방식을 선택하세요.</p>
+                            </div>
+                        )}
+                        
+                        <div className="flex justify-between items-start mb-6">
+                            <div>
+                                <p className="text-xs uppercase font-bold text-slate-500 mb-1">Current Status</p>
+                                <div className="text-2xl font-bold text-white flex items-center gap-2">
+                                    {accessToken ? (
+                                        <>
+                                            <CheckCircle className="text-emerald-400" />
+                                            <span>
+                                                {user?.provider === 'google' ? '구글 계정으로 로그인됨' : '일반 계정으로 로그인됨'}
+                                            </span>
+                                        </>
+                                    ) : (
+                                        <span className="text-slate-500">로그아웃 상태</span>
+                                    )}
+                                </div>
+                                {accessToken && user && (
+                                    <div className="mt-2 text-sm text-slate-400 flex items-center gap-2">
+                                        <div className="w-6 h-6 rounded-full bg-slate-700 overflow-hidden">
+                                            {user.avatarUrl ? <img src={user.avatarUrl} alt="profile" /> : <div className="w-full h-full bg-slate-600"/>}
+                                        </div>
+                                        {user.email} ({user.username})
+                                    </div>
                                 )}
                             </div>
+                            {accessToken && (
+                                <button onClick={logout} className="text-xs bg-red-500/10 text-red-400 px-4 py-2 rounded-lg hover:bg-red-500/20 transition-colors font-bold z-20">
+                                    로그아웃
+                                </button>
+                            )}
                         </div>
-                        {accessToken && (
-                            <button onClick={logout} className="text-xs bg-red-500/10 text-red-400 px-3 py-1.5 rounded hover:bg-red-500/20">
-                                로그아웃
-                            </button>
-                        )}
-                    </div>
 
-                    {/* Timer Visuals */}
-                    {accessToken && (
+                        {/* Timer Visuals */}
                         <div className="space-y-4">
                             {/* Access Token Timer */}
                             <div>
                                 <div className="flex justify-between text-xs mb-1">
-                                    <span className={atTimeLeft === 0 ? "text-red-400 font-bold" : "text-cyan-400"}>Access Token (메모리)</span>
+                                    <span className={atTimeLeft === 0 ? "text-red-400 font-bold" : "text-cyan-400"}>🎫 Access Token (출입증/짧은 수명)</span>
                                     <span className="font-mono">{atTimeLeft === 0 ? "만료됨 (Expired)" : `${atTimeLeft ?? expiresIn}초 남음`}</span>
                                 </div>
                                 <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
                                     <div 
                                         className={`h-full transition-all duration-1000 ${atTimeLeft === 0 ? 'bg-red-500' : 'bg-cyan-500'}`}
-                                        style={{ width: `${Math.min(100, (atTimeLeft! / expiresIn) * 100)}%` }}
+                                        style={{ width: `${Math.min(100, ((atTimeLeft || 0) / expiresIn) * 100)}%` }}
                                     />
                                 </div>
-                                {atTimeLeft === 0 && (
-                                    <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1">
-                                        <AlertTriangle className="w-3 h-3"/>
-                                        다음 요청 시 Refresh Token을 사용하여 재발급을 시도합니다.
-                                    </p>
-                                )}
                             </div>
 
                             {/* Refresh Token Info */}
-                             <div>
+                                <div>
                                 <div className="flex justify-between text-xs mb-1">
-                                    <span className={rtTimeLeft === 0 ? "text-red-400 font-bold" : "text-emerald-400"}>Refresh Token (HttpOnly 쿠키)</span>
+                                    <span className={rtTimeLeft === 0 ? "text-red-400 font-bold" : "text-emerald-400"}>🔐 Refresh Token (재발급권/긴 수명)</span>
                                     <span className="font-mono">
                                         {rtTimeLeft === null ? "대기 중" : 
-                                         rtTimeLeft === 0 ? "만료됨 (Expired)" : `${rtTimeLeft}초 남음`}
+                                            rtTimeLeft === 0 ? "만료됨 (Expired)" : `${rtTimeLeft}초 남음`}
                                     </span>
                                 </div>
                                 <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                                     <div 
+                                        <div 
                                         className={`h-full transition-all duration-1000 ${rtTimeLeft === 0 ? 'bg-red-500' : 'bg-emerald-500'}`}
-                                        style={{ width: `${Math.min(100, (rtTimeLeft! / refreshTokenLife) * 100)}%` }}
-                                     />
+                                        style={{ width: `${Math.min(100, ((rtTimeLeft || 0) / refreshTokenLife) * 100)}%` }}
+                                        />
                                 </div>
                             </div>
                         </div>
-                    )}
+                    </div>
+                </section>
+
+                {/* 화살표 장식 */}
+                <div className="flex justify-center -my-2 opacity-30">
+                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5V19M12 19L19 12M12 19L5 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 </div>
 
-                {/* Actions */}
-                <div className="grid grid-cols-2 gap-4">
-                    <button
-                        onClick={handleLogin}
-                        disabled={!!accessToken || loading}
-                        className="h-14 bg-white text-black font-bold rounded-xl hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex items-center justify-center gap-2"
-                    >
-                         <Key className="w-5 h-5"/>
-                         로그인 (1단계)
-                    </button>
-
-                    <button
+                {/* Step 3. API 요청 (Action) */}
+                <section>
+                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <span className="bg-pink-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">3</span>
+                        서비스 이용 (API 테스트)
+                    </h2>
+                     <button
                         onClick={handleFetchData}
                         disabled={!accessToken || loading}
-                        className={`h-14 font-bold rounded-xl border flex items-center justify-center gap-2 transition-all ${
-                            atTimeLeft === 0 
-                            ? 'bg-yellow-500 text-black border-yellow-500 hover:bg-yellow-400 animate-pulse' 
-                            : 'bg-[#15161a] text-white border-white/20 hover:bg-white/5'
-                        } disabled:opacity-20 disabled:animate-none`}
+                        className={`w-full h-16 text-lg font-bold rounded-xl border flex items-center justify-center gap-3 transition-all ${
+                            atTimeLeft === 0 && accessToken
+                            ? 'bg-yellow-500 text-black border-yellow-500 hover:bg-yellow-400 animate-pulse shadow-[0_0_20px_rgba(234,179,8,0.5)]' 
+                            : 'bg-[#15161a] text-white border-white/20 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed'
+                        }`}
                     >
-                         <Server className="w-5 h-5"/>
-                         데이터 조회 {atTimeLeft === 0 && "(갱신 시도)"}
+                            <Server className="w-6 h-6"/>
+                            {atTimeLeft === 0 && accessToken 
+                                ? "⏳ 토큰이 만료되었습니다! 클릭해서 '자동 연장' 테스트하기" 
+                                : "🔒 보호된 데이터 요청하기 (내 정보 보기)"}
                     </button>
-                </div>
+                    <p className="text-center text-xs text-slate-500 mt-2">
+                        * 토큰이 만료된 상태에서 클릭하면, <b>자동 갱신</b>이 작동하여 <b>자동으로 로그인 상태를 연장</b>합니다.
+                    </p>
+                </section>
+
             </div>
 
-            {/* Right: Logs */}
-            <div className="flex flex-col">
-                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                    <Terminal /> 3. 시스템 로그
-                </h2>
-                <div className="h-[500px] bg-[#0f1014] rounded-2xl border border-white/10 p-4 font-mono text-xs overflow-y-auto custom-scrollbar relative shadow-inner">
-                    {/* Clear Button */}
-                    <button 
-                        onClick={() => setLogs([])} 
-                        className="absolute top-4 right-4 text-[10px] bg-white/10 px-2 py-1 rounded hover:bg-white/20 text-slate-400"
-                    >
-                        지우기
-                    </button>
+            {/* 오른쪽: 로그 패널 (Sticky) */}
+            <div className="lg:col-span-4">
+                <div className="sticky top-6">
+                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <Terminal /> 실시간 시스템 로그
+                    </h2>
+                    <div className="h-[calc(100vh-120px)] bg-[#0f1014] rounded-2xl border border-white/10 p-4 font-mono text-xs overflow-y-auto custom-scrollbar relative shadow-inner">
+                        <button 
+                            onClick={() => setLogs([])} 
+                            className="absolute top-4 right-4 text-[10px] bg-white/10 px-2 py-1 rounded hover:bg-white/20 text-slate-400 z-10"
+                        >
+                            지우기
+                        </button>
 
-                    {logs.length === 0 && (
-                        <div className="flex flex-col items-center justify-center h-full text-slate-600 space-y-2">
-                            <Code className="w-8 h-8"/>
-                            <p>로그 대기 중...</p>
+                        {logs.length === 0 && (
+                            <div className="flex flex-col items-center justify-center h-full text-slate-600 space-y-2 opacity-50">
+                                <Code className="w-8 h-8"/>
+                                <p>대기 중...</p>
+                            </div>
+                        )}
+                        
+                        <div className="space-y-2">
+                            {logs.map((log, i) => (
+                            <div key={i} className={`break-all pl-2 border-l-2 text-[11px] leading-relaxed ${
+                                log.includes('[성공]') || log.includes('완료') ? 'border-emerald-500 text-emerald-100' :
+                                log.includes('[실패]') || log.includes('오류') || log.includes('만료') ? 'border-red-500 text-red-100' :
+                                log.includes('[OAuth]') ? 'border-blue-500 text-blue-100' :
+                                'border-slate-700 text-slate-300'
+                            }`}>
+                                {log}
+                            </div>
+                            ))}
+                            <div ref={logsEndRef}/>
                         </div>
-                    )}
-                    
-                    <div className="space-y-1.5">
-                        {logs.map((log, i) => (
-                        <div key={i} className="break-all pl-2 border-l-2 border-transparent hover:border-white/20">
-                            {log}
-                        </div>
-                        ))}
-                        <div ref={logsEndRef}/>
                     </div>
                 </div>
             </div>
-        </div>
 
+        </div>
       </div>
     </div>
   );

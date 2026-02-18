@@ -17,8 +17,8 @@ export default function AuthExplanation() {
           <BookOpen className="w-6 h-6 text-white" />
         </div>
         <div>
-          <h2 className="text-xl font-bold text-white">Authentication Logic Guide</h2>
-          <p className="text-sm text-slate-400">How the security flows actually work under the hood.</p>
+          <h2 className="text-xl font-bold text-white">인증 로직 가이드</h2>
+          <p className="text-sm text-slate-400">실제 내부에서 인증이 어떻게 처리되는지 알아봅니다.</p>
         </div>
       </div>
 
@@ -32,30 +32,30 @@ export default function AuthExplanation() {
           >
             <div className="flex items-center gap-3">
               <Key className="w-5 h-5 text-purple-400" />
-              <span className="font-bold text-slate-200">Local Login (JWT)</span>
+              <span className="font-bold text-slate-200">일반 로그인 (JWT)</span>
             </div>
             {openSection === 'jwt' ? <ChevronUp className="w-4 h-4 text-slate-500"/> : <ChevronDown className="w-4 h-4 text-slate-500"/>}
           </button>
           
           {openSection === 'jwt' && (
             <div className="p-4 pt-0 text-sm text-slate-400 space-y-3 border-t border-white/5 mt-2">
-              <p>Standard ID/Password authentication flow.</p>
+              <p>아이디와 비밀번호를 사용하는 가장 기본적인 절차입니다.</p>
               <ul className="space-y-2 list-disc list-inside marker:text-purple-500">
                 <li>
-                  <strong className="text-white">1. Login:</strong> User sends credentials. Server validates against DB (bcrypt).
+                  <strong className="text-white">1. 로그인 요청:</strong> 사용자 정보를 검증합니다.
                 </li>
                 <li>
-                  <strong className="text-white">2. Issue Tokens:</strong> Server creates two tokens:
+                  <strong className="text-white">2. 토큰 발급:</strong> 서버가 두 가지 토큰을 줍니다.
                   <ul className="pl-6 mt-1 space-y-1 text-xs text-slate-500 list-square">
-                    <li><span className="text-purple-300">Access Token (Short-lived)</span>: Sent in JSON body. Used for API Authorization.</li>
-                    <li><span className="text-purple-300">Refresh Token (Long-lived)</span>: Sent in <code>HttpOnly Cookie</code>. Used to get new Access Tokens.</li>
+                    <li><span className="text-purple-300">Access Token (짧은 수명)</span>: 실제 출입증입니다.</li>
+                    <li><span className="text-purple-300">Refresh Token (긴 수명)</span>: 재발급용 쿠폰입니다.</li>
                   </ul>
                 </li>
                 <li>
-                  <strong className="text-white">3. Secure Storage:</strong>
+                  <strong className="text-white">3. 안전한 저장:</strong>
                   <div className="mt-1 bg-black/40 p-2 rounded border border-white/5 text-xs font-mono">
-                    Access Token -&gt; In-Memory (React State)<br/>
-                    Refresh Token -&gt; HttpOnly Cookie (Browser handles it)
+                    Access Token -&gt; 변수에 저장 (Memory)<br/>
+                    Refresh Token -&gt; 쿠키에 저장 (HttpOnly)
                   </div>
                 </li>
               </ul>
@@ -71,29 +71,29 @@ export default function AuthExplanation() {
           >
             <div className="flex items-center gap-3">
               <Globe className="w-5 h-5 text-cyan-400" />
-              <span className="font-bold text-slate-200">OAuth 2.0 (Google)</span>
+              <span className="font-bold text-slate-200">구글 로그인 (OAuth 2.0)</span>
             </div>
             {openSection === 'oauth' ? <ChevronUp className="w-4 h-4 text-slate-500"/> : <ChevronDown className="w-4 h-4 text-slate-500"/>}
           </button>
           
           {openSection === 'oauth' && (
             <div className="p-4 pt-0 text-sm text-slate-400 space-y-3 border-t border-white/5 mt-2">
-              <p>Granting access via third-party provider.</p>
+              <p>외부 계정(구글)을 통해 인증을 대신하는 방식입니다.</p>
               <ol className="space-y-2 list-decimal list-inside marker:text-cyan-500">
                 <li>
-                  <strong className="text-white">Authorization Request:</strong> Redirect user to Google Consent Screen.
+                  <strong className="text-white">인증 요청:</strong> 구글 로그인 화면으로 이동합니다.
                 </li>
                 <li>
-                  <strong className="text-white">Callback:</strong> Google redirects back with a temporary <code>code</code>.
+                  <strong className="text-white">복귀 (Callback):</strong> 구글이 '임시 코드(Code)'를 줍니다.
                 </li>
                 <li>
-                  <strong className="text-white">Token Exchange (Backend):</strong> 
+                  <strong className="text-white">토큰 교환:</strong> 
                   <div className="mt-1 bg-black/40 p-2 rounded border border-white/5 text-xs font-mono">
-                    Backend sends `code` + `client_secret` to Google -&gt; Gets Google Tokens.
+                    백엔드가 이 '임시 코드'를 구글에 주고, 진짜 회원 정보를 받아옵니다.
                   </div>
                 </li>
                 <li>
-                  <strong className="text-white">Final Issue:</strong> Backend creates <em>internal</em> JWTs for the user (same as Local Login) so the frontend treats them identically.
+                  <strong className="text-white">최종 발급:</strong> 백엔드는 일반 로그인과 똑같은 JWT 토큰을 만들어 줍니다.
                 </li>
               </ol>
             </div>
@@ -108,33 +108,33 @@ export default function AuthExplanation() {
           >
             <div className="flex items-center gap-3">
               <RefreshCw className="w-5 h-5 text-emerald-400" />
-              <span className="font-bold text-slate-200">Silent Refresh</span>
+              <span className="font-bold text-slate-200">자동 갱신</span>
             </div>
             {openSection === 'refresh' ? <ChevronUp className="w-4 h-4 text-slate-500"/> : <ChevronDown className="w-4 h-4 text-slate-500"/>}
           </button>
           
           {openSection === 'refresh' && (
             <div className="p-4 pt-0 text-sm text-slate-400 space-y-3 border-t border-white/5 mt-2">
-              <p>Maintaining session without forcing re-login.</p>
+              <p>로그인이 풀리지 않게 뒤에서 몰래 연장하는 기술입니다.</p>
               <ul className="space-y-2 list-disc list-inside marker:text-emerald-500">
                 <li>
-                  <strong className="text-white">What happens when Access Token expires?</strong>
+                  <strong className="text-white">만약 토큰이 만료되었다면?</strong>
                   <div className="pl-4 mt-1 text-xs text-slate-500">
-                    API returns <code>401 Unauthorized</code>.
+                    서버가 <code>401 Unauthorized</code> 에러를 냅니다.
                   </div>
                 </li>
                 <li>
-                  <strong className="text-white">Interceptor Logic:</strong>
+                  <strong className="text-white">자동 갱신 로직:</strong>
                   <div className="mt-1 bg-black/40 p-2 rounded border border-white/5 text-xs font-mono">
-                    1. Catch 401 Error<br/>
-                    2. Call /auth/refresh (Cookie sent automatically)<br/>
-                    3. Get new Access Token<br/>
-                    4. Retry original request
+                    1. 401 에러 감지<br/>
+                    2. 재발급 요청 (쿠키 자동 전송)<br/>
+                    3. 새 Access Token 받음<br/>
+                    4. 원래 하려던 요청 재시도
                   </div>
                 </li>
                 <li>
-                  <strong className="text-white">Security:</strong> 
-                  Refresh Token is never exposed to JavaScript (HttpOnly), preventing XSS theft.
+                  <strong className="text-white">보안:</strong> 
+                  Refresh Token은 자바스크립트가 접근 불가(HttpOnly)하여 해킹(XSS)에 안전합니다.
                 </li>
               </ul>
             </div>
