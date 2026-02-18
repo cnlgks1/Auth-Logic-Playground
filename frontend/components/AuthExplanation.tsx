@@ -84,12 +84,12 @@ export default function AuthExplanation() {
                   <strong className="text-white">인증 요청:</strong> 구글 로그인 화면으로 이동합니다.
                 </li>
                 <li>
-                  <strong className="text-white">복귀 (Callback):</strong> 구글이 '임시 코드(Code)'를 줍니다.
+                  <strong className="text-white">복귀 (Callback):</strong> 구글이 &apos;임시 코드(Code)&apos;를 줍니다.
                 </li>
                 <li>
                   <strong className="text-white">토큰 교환:</strong> 
                   <div className="mt-1 bg-black/40 p-2 rounded border border-white/5 text-xs font-mono">
-                    백엔드가 이 '임시 코드'를 구글에 주고, 진짜 회원 정보를 받아옵니다.
+                    백엔드가 이 &apos;임시 코드&apos;를 구글에 주고, 진짜 회원 정보를 받아옵니다.
                   </div>
                 </li>
                 <li>
