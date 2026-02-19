@@ -23,7 +23,11 @@
 
 소스를 다운받아 직접 실행하는 방법입니다.
 
-### 1. 설치 및 실행
+### 1. 백엔드 설정 및 실행
+**로컬 환경은 SQLite를 사용하므로 별도 DB 설치가 필요 없습니다.**
+(Render 배포 시에는 자동으로 PostgreSQL로 전환되도록 설정되어 있습니다)
+
+```bash
 ```bash
 # 1. 소스 다운로드
 git clone https://github.com/YOUR_GITHUB_ID/auth-logic-playground.git

@@ -6,8 +6,19 @@ services:
     rootDir: backend
     plan: free
     # Install dev dependencies to get Nest CLI, then build
-    buildCommand: npm install --include=dev && npx prisma generate && npm run build
-    # Use db push to sync schema without migrations (fixes SQLite vs Postgres conflict)
+    # Build Command:
+    # 1. Install dependencies
+    # 2. (Critical) Swap SQLite config to PostgreSQL config for production
+    # 3. Generate Prisma client
+    # 4. Build NestJS
+    buildCommand: |
+      npm install --include=dev
+      sed -i 's/provider = "sqlite"/provider = "postgresql"/g' backend/prisma/schema.prisma
+      sed -i 's/url      = "file:.\/dev.db"/url      = env("DATABASE_URL")/g' backend/prisma/schema.prisma
+      npx prisma generate
+      npm run build
+    
+    # Start Command
     startCommand: npx prisma db push && npm run start:prod
     envVars:
       - key: DATABASE_URL
