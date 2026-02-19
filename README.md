@@ -10,12 +10,12 @@
 
 설치 없이 웹 브라우저만 있으면 됩니다.
 
-**👉 <a href="https://auth-logic-playground.vercel.app/" target="_blank">Live Demo 바로가기 (Vercel)</a>**
+**👉 [Live Demo 바로가기 (Vercel)](https://auth-logic-playground.vercel.app/)**
 
 1. 사이트에 접속합니다.
 2. **'B. 구글 계정 입장'** 섹션을 찾습니다.
 3. 본인의 **구글 Client ID**와 **Secret**을 입력하고 로그인 버튼을 누릅니다.
-   - 키가 없다면 아래 [🔑 구글 인증 키 발급받는 법](#-구글-인증-키-발급받는-법)을 참고하세요.
+   - 키가 없다면 아래 [🔑 구글 인증 키 발급받는 법](#-구글-인증-키-발급받는-법-client-id--secret)을 참고하세요.
 
 ---
 
