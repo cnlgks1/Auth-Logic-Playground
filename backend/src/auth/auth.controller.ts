@@ -75,15 +75,19 @@ export class AuthController {
   async exchangeToken(@Body() body: { code: string; clientId: string; clientSecret: string; redirectUri: string; expiresInSeconds?: number; refreshTokenExpiresInSeconds?: number }, @Res({ passthrough: true }) res) {
     const { code, redirectUri, expiresInSeconds, refreshTokenExpiresInSeconds } = body;
     // 1. Client ID/Secret 결정 (사용자 입력값 우선, 없으면 환경변수)
+    // 참고: 프론트엔드에서 입력을 강제하더라도, 백엔드는 안전장치로 환경변수를 fallback으로 가지고 있을 수 있습니다.
     const clientId = body.clientId || process.env.GOOGLE_CLIENT_ID;
     const clientSecret = body.clientSecret || process.env.GOOGLE_CLIENT_SECRET;
 
     if (body.clientId) {
-      console.log(`🔧 [Backend] 사용자 지정 Client ID 사용: ${body.clientId.substring(0, 10)}...`);
+      console.log(`🔧 [Backend] 사용자 입력 Client ID 사용: ${body.clientId.substring(0, 15)}...`);
+    } else if (process.env.GOOGLE_CLIENT_ID) {
+      console.log(`🔧 [Backend] 서버 환경변수(.env) Client ID 사용`);
     }
 
     if (!clientId || !clientSecret) {
-      throw new Error('Client ID 또는 Secret이 누락되었습니다. (입력값 또는 .env 확인 필요)');
+      console.error('❌ [Backend] 구글 자격증명(Client ID/Secret)이 없습니다.');
+      throw new Error('Backend: Google Client ID/Secret이 설정되지 않았습니다. Body로 보내거나 .env를 확인하세요.');
     }
 
     // 2. 구글 토큰 교환 요청

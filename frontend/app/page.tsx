@@ -307,29 +307,42 @@ export default function LoginPage() {
 
           // 성공했으니 코드는 더 이상 필요 없음 (UI 초기화)
           setGoogleCode(null);
+          
+          // [중요] URL에서 ?code=... 제거하여 재사용 방지
+          window.history.replaceState({}, document.title, window.location.pathname);
 
       } catch (err: any) {
           addLog(`🔴 [OAuth 실패] 토큰 교환 중 오류 발생: ${err.message}`);
+          // 실패했더라도 사용한(또는 망가진) 코드는 URL에서 지워줘야 함!
+          setGoogleCode(null);
+          window.history.replaceState({}, document.title, window.location.pathname);
       } finally {
           setOauthLoading(false);
       }
   };
 
+  // 중복 요청 방지용 플래그 (Strict Mode 대응)
+  const isProcessing = useRef(false);
+
   // 🔗 URL에서 인증 코드(Code) 감지 및 로컬 스토리지에 저장된 설정 복구
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
-    if (code) {
+    
+    // 코드가 있고, 아직 처리 중이 아닐 때만 실행
+    if (code && !isProcessing.current) {
+        isProcessing.current = true; // 문 걸어 잠그기 🔒
         setGoogleCode(code);
         addLog(`✨ [OAuth] 구글에서 인증 코드(Code)를 받아왔습니다!`);
         addLog(`   - Code: ${code.substring(0, 15)}...`);
         
-        // 이전에 입력했던 커스텀 설정 & 토큰 수명 설정 복구
-        const savedClientId = localStorage.getItem('custom_office_client_id');
-        const savedClientSecret = localStorage.getItem('custom_office_client_secret');
-        const savedExpiresIn = localStorage.getItem('custom_expires_in');
-        const savedRtExpiresIn = localStorage.getItem('custom_rt_expires_in');
+        // 이전에 입력했던 커스텀 설정 & 토큰 수명 설정 복구 (임시 저장소인 SessionStorage 사용)
+        const savedClientId = sessionStorage.getItem('temp_client_id');
+        const savedClientSecret = sessionStorage.getItem('temp_client_secret');
+        const savedExpiresIn = sessionStorage.getItem('temp_expires_in');
+        const savedRtExpiresIn = sessionStorage.getItem('temp_rt_expires_in');
         
+        // UI에도 복구해서 보여줌 (사용자가 알 수 있게)
         if (savedClientId) setCustomClientId(savedClientId);
         if (savedClientSecret) setCustomClientSecret(savedClientSecret);
         
@@ -348,12 +361,18 @@ export default function LoginPage() {
         }
 
         // [자동 실행] 실제 서비스처럼 바로 토큰 교환 요청!
-        // (복구된 설정값을 인자로 전달하여 즉시 반영)
         addLog(`🚀 [자동] 사용자 클릭 없이 바로 토큰 교환을 시작합니다.`);
-        // 중요: 복구된 ID/Secret도 인자로 직접 넘김 (State 업데이트 기다리지 않음)
+        
+        // 중요: 복구된 ID/Secret을 인자로 넘겨서 교환 시도
         handleGoogleExchange(code, restoredExpiresIn, restoredRtExpiresIn, savedClientId || undefined, savedClientSecret || undefined);
 
-        // 코드를 URL에서 지워주는 센스 (선택)
+        // 사용 끝난 임시 데이터는 즉시 파기 (보안)
+        sessionStorage.removeItem('temp_client_id');
+        sessionStorage.removeItem('temp_client_secret');
+        sessionStorage.removeItem('temp_expires_in');
+        sessionStorage.removeItem('temp_rt_expires_in');
+
+        // 코드를 URL에서 지워주는 센스
         window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
@@ -365,11 +384,8 @@ export default function LoginPage() {
     setUser(null);
     setGoogleCode(null);
     
-    // 로컬 스토리지에 저장된 설정값도 모두 삭제
-    localStorage.removeItem('custom_office_client_id');
-    localStorage.removeItem('custom_office_client_secret');
-    localStorage.removeItem('custom_expires_in');
-    localStorage.removeItem('custom_rt_expires_in');
+    // [보안] 세션 스토리지 깔끔하게 정리 (모든 임시 데이터 삭제)
+    sessionStorage.clear();
 
     // 입력 필드 상태도 초기화 (시각적 피드백)
     setCustomClientId('');
@@ -380,27 +396,37 @@ export default function LoginPage() {
 
   // 🚀 [Step A] 구글 로그인 페이지로 이동
   const handleGoogleLogin = () => {
-      // 사용자 입력값이 있으면 우선 사용, 없으면 환경변수(.env) 사용 (하이브리드 방식)
-      const clientId = customClientId || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-      const clientSecret = customClientSecret || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET;
+      // [중요] '학습용 모드'이므로 환경변수(.env) 자동 적용을 막아둡니다.
+      // 사용자가 직접 키를 입력해보며 과정을 이해하도록 유도하기 위함입니다.
+      // 운영 환경(Production)에서는 || process.env.GOOGLE_CLIENT_ID 를 붙여서 자동화해야 합니다.
+      const clientId = customClientId;
+      const clientSecret = customClientSecret;
       
+      // 1-1. 필수 입력 체크
       if (!clientId || !clientSecret) {
-          alert("Client ID와 Client Secret이 필요합니다.\n\n1. 화면에 직접 입력하거나\n2. .env.local 파일에 설정하세요.");
+          alert(
+            "⛔️ [입력 필수]\n\n" +
+            "구글 Client ID와 Client Secret을 직접 입력해야 합니다.\n" +
+            "(학습을 위해 .env 자동 연동을 꺼두었습니다)\n\n" +
+            "1. 구글 클라우드 콘솔에서 키 발급\n" +
+            "2. 화면의 입력창에 복사/붙여넣기\n" +
+            "3. '구글 로그인창 열기' 클릭"
+          );
           return;
       }
 
       const targetUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=email%20profile`;
       
-      // 사용자 설정 & 토큰 수명 설정을 로컬 스토리지에 저장 (갔다 와서 복구용)
-      localStorage.setItem('custom_expires_in', expiresIn.toString());
-      localStorage.setItem('custom_rt_expires_in', refreshTokenLife.toString());
+      // [임시 저장] 리다이렉트 후 복구를 위해 SessionStorage에 '잠시' 저장 (창 닫으면 사라짐)
+      sessionStorage.setItem('temp_expires_in', expiresIn.toString());
+      sessionStorage.setItem('temp_rt_expires_in', refreshTokenLife.toString());
 
       if (customClientId) {
-          addLog(`🔧 [Custom] 사용자 지정 Client ID로 로그인합니다.`);
-          localStorage.setItem('custom_office_client_id', customClientId);
-          if (customClientSecret) {
-              localStorage.setItem('custom_office_client_secret', customClientSecret);
-          }
+        addLog(`🔧 [Custom] 입력하신 Client ID를 임시 저장소(Session)에 보관합니다.`);
+        sessionStorage.setItem('temp_client_id', customClientId);
+        if (customClientSecret) {
+            sessionStorage.setItem('temp_client_secret', customClientSecret);
+        }
       }
 
       addLog(`👉 [OAuth] 구글 로그인 페이지로 이동합니다...`);
@@ -411,11 +437,11 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-slate-300 font-sans selection:bg-purple-500/30">
-      <div className="max-w-5xl mx-auto p-6 flex flex-col min-h-screen gap-10">
+      <div className="max-w-5xl mx-auto p-4 md:p-6 lg:p-8 flex flex-col min-h-screen gap-6 md:gap-10">
         
         {/* Header */}
-        <header className="border-b border-white/5 pb-6 text-center">
-            <h1 className="text-3xl font-bold text-white mb-3">🗝️ 인증 로직 플레이그라운드</h1>
+        <header className="border-b border-white/5 pb-4 md:pb-6 text-center">
+            <h1 className="text-2xl md:text-3xl font-bold text-white mb-2 md:mb-3">🗝️ 인증 로직 플레이그라운드</h1>
             <p className="text-slate-500 max-w-2xl mx-auto">
                       이곳은 <b>로그인(인증)의 원리</b>를 눈으로 확인하는 실험실입니다.
                       {/* <br /> */}
@@ -516,7 +542,7 @@ export default function LoginPage() {
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-400 mb-1.5">Client Secret (입력 시 우선 사용)</label>
+                                    <label className="block text-sm font-medium text-slate-400 mb-1.5">Client Secret</label>
                                     <input 
                                         type="password" 
                                         value={customClientSecret}
@@ -581,7 +607,7 @@ export default function LoginPage() {
                             </div>
                         )}
                         
-                        <div className="flex justify-between items-start mb-6">
+                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-6">
                             <div>
                                 <p className="text-xs uppercase font-bold text-slate-500 mb-1">Current Status</p>
                                 <div className="text-2xl font-bold text-white flex items-center gap-2">
@@ -606,7 +632,7 @@ export default function LoginPage() {
                                 )}
                             </div>
                             {accessToken && (
-                                <button onClick={logout} className="text-xs bg-red-500/10 text-red-400 px-4 py-2 rounded-lg hover:bg-red-500/20 transition-colors font-bold z-20">
+                                <button onClick={logout} className="w-full sm:w-auto text-xs bg-red-500/10 text-red-400 px-4 py-2 rounded-lg hover:bg-red-500/20 transition-colors font-bold z-20">
                                     로그아웃
                                 </button>
                             )}
@@ -686,7 +712,7 @@ export default function LoginPage() {
                     <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
                         <Terminal /> 실시간 시스템 로그
                     </h2>
-                    <div className="h-[calc(100vh-120px)] bg-[#0f1014] rounded-2xl border border-white/10 p-4 font-mono text-xs overflow-y-auto custom-scrollbar relative shadow-inner">
+                    <div className="h-64 lg:h-[calc(100vh-120px)] bg-[#0f1014] rounded-2xl border border-white/10 p-4 font-mono text-xs overflow-y-auto custom-scrollbar relative shadow-inner">
                         <button 
                             onClick={() => setLogs([])} 
                             className="absolute top-4 right-4 text-[10px] bg-white/10 px-2 py-1 rounded hover:bg-white/20 text-slate-400 z-10"
