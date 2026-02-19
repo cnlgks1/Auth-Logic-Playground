@@ -28,7 +28,6 @@
 (Render 배포 시에는 자동으로 PostgreSQL로 전환되도록 설정되어 있습니다)
 
 ```bash
-```bash
 # 1. 소스 다운로드
 git clone https://github.com/YOUR_GITHUB_ID/auth-logic-playground.git
 cd auth-logic-playground
@@ -36,8 +35,12 @@ cd auth-logic-playground
 # 2. 백엔드 실행 (터미널 1)
 cd backend
 pnpm install
-pnpm db:push  # DB 초기화
-pnpm start:dev
+pnpm db:push   # DB 초기화
+pnpm start:dev # 서버 실행
+
+# (선택) DB 데이터 확인 (새 터미널)
+# http://localhost:5555 에서 데이터를 엑셀처럼 관리 가능
+# pnpm db:studio
 
 # 3. 프론트엔드 실행 (터미널 2)
 cd ../frontend
