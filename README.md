@@ -10,7 +10,7 @@
 
 설치 없이 웹 브라우저만 있으면 됩니다.
 
-**👉 [Live Demo 바로가기 (Vercel)](https://auth-logic-playground.vercel.app/)**
+**👉 <a href="https://auth-logic-playground.vercel.app/" target="_blank">Live Demo 바로가기 (Vercel)</a>**
 
 1. 사이트에 접속합니다.
 2. **'B. 구글 계정 입장'** 섹션을 찾습니다.
